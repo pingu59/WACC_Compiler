@@ -19,7 +19,7 @@ parseProgramF = do
               fs <- many (try parseFuncF)
               stat <- parseStatListF
               reserved "end"
-              return $ Ann (Program fs stat) (pos, None) 
+              return $ Ann (Program fs stat) (pos, None)
 
 parseFuncF :: Parser (FuncF ())
 parseFuncF = whiteSpace >>= \_ ->
@@ -30,7 +30,7 @@ parseFuncF = whiteSpace >>= \_ ->
              reserved "is" >>= \_ ->
              parseStatListF >>= \stat ->
              reserved "end" >>= \_ ->
-             return $ Ann (Func t ident ps stat) (pos, None) 
+             return $ Ann (Func t ident ps stat) (pos, None)
 
 
 parseParamF :: Parser (ParamF ())
@@ -51,16 +51,16 @@ parseArrayTypeF = whiteSpace >>= \_ ->
             (parseBaseTypeF
          <|> parsePairTypeF) >>= \t ->
              many (try $ reserved "[]") >>= \rs ->
-             return $ foldl (\acc x -> Ann (TArray acc) (pos, None)) t rs 
-  
+             return $ foldl (\acc x -> Ann (TArray acc) (pos, None)) t rs
+
 parseBaseTypeF :: Parser (TypeF ())
 parseBaseTypeF = whiteSpace >>= \_ ->
-                 getPosition >>= \pos -> 
+                 getPosition >>= \pos ->
                 (reserved "int" >>= \_ -> return $ Ann TInt (pos, None))
             <|> (reserved "bool" >>= \_ -> return $ Ann TBool (pos, None))
             <|> (reserved "char" >>= \_ -> return $ Ann TChar (pos, None))
             <|> (reserved "string" >>= \_ -> return $ Ann TStr (pos, None))
-           
+
 parsePairTypeF :: Parser (TypeF ())
 parsePairTypeF = whiteSpace >>= \_ ->
                  getPosition >>= \pos ->
@@ -69,7 +69,7 @@ parsePairTypeF = whiteSpace >>= \_ ->
                  parsePairElemTypeF >>= \t1 ->
                  comma >>= \_ ->
                  parsePairElemTypeF >>= \t2 ->
-                 reservedOp ")" >>= \_ -> 
+                 reservedOp ")" >>= \_ ->
                  return $ Ann (TPair t1 t2) (pos, None)
         where parsePairElemTypeF :: Parser (TypeF ())
               parsePairElemTypeF = try parseArrayTypeF
@@ -77,7 +77,7 @@ parsePairTypeF = whiteSpace >>= \_ ->
                                <|> (getPosition >>= \pos ->
                                     string "pair" >>= \_ ->
                                     return $ (Ann Any (pos, None)))
-                               
+
 parseStatListF :: Parser (StatListF ())
 parseStatListF = whiteSpace >>= \_ ->
                  getPosition >>= \pos ->
@@ -87,7 +87,7 @@ parseStatListF = whiteSpace >>= \_ ->
                     return $ Ann (StatList (stat:rest)) (pos, None))
                 <|> (return $ Ann (StatList [stat]) (pos, None))
 
-                               
+
 parseStatF :: Parser (StatF ())
 parseStatF = whiteSpace >>= \_ ->
            ( parseSkipStatF
@@ -119,7 +119,7 @@ parseAssignStatF = do
                    reservedOp "="
                    rhs <- parseAssignRHSF
                    return $ Ann (Assign lhs rhs) (pos, None)
-                                       
+
 parseReadStatF :: Parser (StatF ())
 parseReadStatF = do
                  pos <- getPosition
@@ -141,7 +141,7 @@ parseFreeStatF = do
                  reserved "free"
                  expr <- parseExprF
                  return $ Ann (Free expr) (pos, None)
-                 
+
 parseReturnStatF :: Parser (StatF ())
 parseReturnStatF = do
                    whiteSpace
@@ -165,7 +165,7 @@ parsePrintStatF = do
                   reserved "print"
                   expr <- parseExprF
                   return $ Ann (Print expr) (pos, None)
-                  
+
 parsePrintlnStatF :: Parser (StatF ())
 parsePrintlnStatF = do
                     whiteSpace
@@ -207,14 +207,14 @@ parseSubroutineStatF = do
 
 
 parseAssignLHSF :: Parser (AssignLHSF ())
-parseAssignLHSF = getPosition >>= \pos -> 
+parseAssignLHSF = getPosition >>= \pos ->
                   (try parsePairElemF >>= \elem ->
                     return $ Ann (PairElemLHS elem) (pos, None))
               <|> (try parseArrayElemF >>= \elem ->
                     return $ Ann (ArrayElemLHS elem) (pos, None))
               <|> (try parseIdentF >>= \ident ->
                     return $ Ann (IdentLHS ident) (pos, None))
-                  
+
 parseAssignRHSF :: Parser (AssignRHSF ())
 parseAssignRHSF = (getPosition >>= \pos ->
                     parseExprF >>= \expr ->
@@ -233,7 +233,7 @@ parseArrayLiterRHSF = whiteSpace >>= \_ ->
                       commaSep parseExprF >>= \es ->
                       reservedOp "]" >>= \_ ->
                       return $ Ann (ArrayLiter es) (pos, None)
-                 
+
 parseNewPairRHSF :: Parser (AssignRHSF ())
 parseNewPairRHSF = do
                   pos <- getPosition
@@ -244,7 +244,7 @@ parseNewPairRHSF = do
                   expr2 <- parseExprF
                   reservedOp ")"
                   return $ Ann (NewPair expr1 expr2) (pos, None)
-                  
+
 parseCallRHSF :: Parser (AssignRHSF ())
 parseCallRHSF = do
                 pos <- getPosition
@@ -261,14 +261,14 @@ parsePairElemF = getPosition >>= \pos ->
          <|> ( reserved "snd" >>= \_ ->
                parseExprF >>= \expr->
                return $ Ann (PairElemSnd expr) (pos, None))
-  
+
 parseExprF :: Parser (ExprF ())
 parseExprF = whiteSpace >>= \_ ->
              buildExpressionParser table term
-             
-table = [ [unary "+" (UExpr Pos),
-           unary "-" (UExpr Neg),
-           unary "!" (UExpr Not),
+
+table = [ [unary1 "+" (UExpr Pos),
+           unary1 "-" (UExpr Neg),
+           unary1 "!" (UExpr Not),
            unary "len" (UExpr Len),
            unary "ord" (UExpr Ord),
            unary "chr" (UExpr Chr)],
@@ -287,13 +287,18 @@ table = [ [unary "+" (UExpr Pos),
           [binary "||" (BExpr Or) AssocLeft]
         ]
 
-            
-unary n f =
+unary1 n f =
   Prefix . chainl1 (try (whiteSpace >>= \_ ->
                     getPosition >>= \pos ->
                     symbol n >>= \_ ->
                     return $ \e -> Ann (f e) (pos, None))) $ return (.)
-  
+
+unary n f =
+  Prefix . chainl1 (try (whiteSpace >>= \_ ->
+                    getPosition >>= \pos ->
+                    reserved n >>= \_ ->
+                    return $ \e -> Ann (f e) (pos, None))) $ return (.)
+
 binary n f assoc =
   Infix (try (whiteSpace >>= \_ ->
          getPosition >>= \pos ->
@@ -305,7 +310,7 @@ term =  try parseLiterExprF
    <|>  try parseArrayExprF
    <|>  try parseIdentExprF
    <|>  try parseBracketExprF
-            
+
 
 parseArrayExprF :: Parser (ExprF ())
 parseArrayExprF = do
@@ -341,27 +346,27 @@ parseLiterF = try parseIntLiterF
          <|> try parsePairLiterF
 
 parseIntLiterF :: Parser (LiterF ())
-parseIntLiterF = getPosition >>= (\pos -> 
-               integer >>= (\x -> 
+parseIntLiterF = getPosition >>= (\pos ->
+               integer >>= (\x ->
                return $ Ann (IntLiter x) (pos, None))
            )
 
 parseBoolLiterF :: Parser (LiterF ())
 parseBoolLiterF = getPosition >>= (\pos ->
-              (reserved "true" >>= (\_ -> 
+              (reserved "true" >>= (\_ ->
                 return $ Ann (BoolLiter True) (pos, None)))
-          <|> (reserved "false" >>= (\_ -> 
+          <|> (reserved "false" >>= (\_ ->
                 return $ Ann (BoolLiter False) (pos, None)))
           )
 
 parseCharLiterF :: Parser (LiterF ())
 parseCharLiterF = getPosition >>= (\pos ->
-              charLiteral >>= (\c -> 
+              charLiteral >>= (\c ->
               return $ Ann (CharLiter c) (pos, None)))
 
 parseStringLiterF :: Parser (LiterF ())
 parseStringLiterF = getPosition >>= (\pos ->
-               stringLiteral >>= (\s -> 
+               stringLiteral >>= (\s ->
                return $ Ann (StringLiter s) (pos, None)))
 
 parsePairLiterF :: Parser (LiterF ())
@@ -371,8 +376,8 @@ parsePairLiterF = getPosition >>= \pos ->
 
 
 parseIdentF :: Parser (IdentF ())
-parseIdentF = getPosition >>= (\pos -> 
-               ident >>= (\i -> 
+parseIdentF = getPosition >>= (\pos ->
+               ident >>= (\i ->
                return $ Ann (Ident i) (pos, None)))
 
 parseArrayElemF :: Parser (ArrayElemF ())
@@ -397,7 +402,3 @@ parseFile file =
       where line = \e -> show $ sourceLine $ errorPos e
             col = \e -> show $ sourceLine $ errorPos e
             name = \e -> show $ sourceName $ errorPos e
-
-
-
-
