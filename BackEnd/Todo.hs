@@ -1,6 +1,7 @@
 -- 1. Utility for writing assembly to files
--- 2. write a script to allow emulation and auto testing
--- 3. output could be different to the formal one
+-- 2. write a script to allow emulation
+-- 3. assume the assembly is in [String]
+
 module BackEnd.Todo where
 
 import FrontEnd.AST
@@ -26,5 +27,5 @@ main = do
   args <- getArgs
   case args of
     [file] -> do
-      writeCode file sampleExit
+      writeCode file sampleExit --change this to actual output
     _ -> fail ("File does not exist\n")
