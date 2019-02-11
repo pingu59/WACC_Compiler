@@ -1,0 +1,10 @@
+#!/usr/bin/bash
+#cannot run on lab computer..permission denied
+#compile
+$file = $1 + ".wacc"
+$out = $1 + ".s"
+runghc BackEnd/Todo.hs $file
+
+#run
+arm-linux-gnueabi-gcc -o $1 -mcpu=arm1176jzf-s -mtune=arm1176jzf-s $out
+qemu-arm -L /usr/arm-linux-gnueabi/ $1

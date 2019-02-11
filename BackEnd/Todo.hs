@@ -5,19 +5,7 @@ module BackEnd.Todo where
 
 import FrontEnd.AST
 import FrontEnd.SemanticAnalyzer
-
--- 0	.text
--- 1
--- 2	.global main
--- 3	main:
--- 4		PUSH {lr}
--- 5		LDR r4, =-1
--- 6		MOV r0, r4
--- 7		BL exit
--- 8		LDR r0, =0
--- 9		POP {pc}
--- 10		.ltorg
--- 11
+import System.Environment
 
 indent :: String -> String
 indent s = "\t\t" ++ s
@@ -33,3 +21,10 @@ writeCode filename assembly = do
 sampleExit = map nextline $ [".text", "", ".global main", "main:"] ++
               (map indent ["PUSH {lr}", "LDR r4, =-1", "MOV r0, r4", "BL exit",
               "LDR r0, =0", "POP {pc}", ".ltorg", ""])
+
+main = do
+  args <- getArgs
+  case args of
+    [file] -> do
+      writeCode file sampleExit
+    _ -> fail ("File does not exist\n")
