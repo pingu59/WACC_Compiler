@@ -8,7 +8,7 @@ import FrontEnd.AST
 import FrontEnd.SemanticAnalyzer
 
 test = do
-       putStrLn "*†*:;;;:*†*:;;;:*†*Semantic error test*†*:;;;:*†*:;;;:*†*"
+       putStrLn "*:;;;:*:;;;:*:;;;:*Semantic error test*:;;;:*:;;;:*:;;;:*"
        analyzeExprTest
        analyzeLiteralTest
        analyzeArrayTest
@@ -213,7 +213,7 @@ analyzePairTest = hspec $ do
     it "☑️ can analyze pairs of same type" $ do
       analyzeUsing "pair(int, int) p = newpair(1, 1)" parseStatF analyzeStatF `shouldReturn`(
         Just "Declare TPair (TInt, TInt) \"p\" NewPair LiterExpr IntLiter 1 LiterExpr IntLiter 1")
-        
+
     it "☑️ can access pair elements" $ do
       analyzeUsing "pair(int, int) p = newpair(1, 1); int p1 = fst p" parseStatF analyzeStatF `shouldReturn`(
         Just "Declare TPair (TInt, TInt) \"p\" NewPair LiterExpr IntLiter 1 LiterExpr IntLiter 1")

@@ -196,9 +196,9 @@ showBop And = "&&"
 showBop Or = "||"
 
 showUop :: UnaryOp -> String
-showUop Not = "~" --not sure
+showUop Not = "!" --not sure
 showUop Neg = "-"
-showUop Pos = "!"
+showUop Pos = "+"
 showUop Len = "len"
 showUop Ord = "ord"
 showUop Chr = "chr"
