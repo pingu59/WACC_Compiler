@@ -398,6 +398,8 @@ translatePrint TStr = do
       s7 = JUMP (NAME "fflush") ["fflush"]
       statement = SEQ s1 (SEQ s2 (SEQ s3 (SEQ s4 (SEQ s5 (SEQ s6 s7)))))
 
+translatePrint TChar = translatePrint TStr
+
 translatePrint TChar = do
   addFragment (PROC statement frame)
   addFragment (STRING msg "%d\0")
