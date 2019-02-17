@@ -76,6 +76,10 @@ type StatListF a = Ann (StatList a)
 type ParamF a = Ann (Param a)
 type FuncAppF a = Ann (FuncApp a)
 
+typeLen :: Type -> Int
+typeLen TChar = 1
+typeLen TBool = 1
+typeLen _ = 4
 
 arrayT = TArray TAny
 pairT = TPair TAny TAny
@@ -162,4 +166,3 @@ instance Show (Type) where
 
 instance Show (Ident a) where
   show (Ident s) = show s
-

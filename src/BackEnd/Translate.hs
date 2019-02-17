@@ -51,7 +51,7 @@ unEx (Cx genStm) = do
                       genStm label1 label2,
                       LABEL label2,
                       MOVE (TEMP temp) (CONSTI 0),
-                      LABEL label1]) (TEMP temp)  
+                      LABEL label1]) (TEMP temp)
 unEx (Nx s) = return $ IR.ESEQ s (IR.CONSTI 0)
 
 -- TODO
@@ -126,7 +126,7 @@ addVarEntry symbol t access = do
   return ()
 
 addFunEntry :: String -> Type -> State TranslateState ()
-addFunEntry label t = do  
+addFunEntry label t = do
   state <- get
   ((frame, env):rest) <- verifyLevels $ levels state
   let { funEntry = FunEntry frame label t }
@@ -140,7 +140,7 @@ addFragment frag = do
     STRING _ _ -> put $ state { dataFrags = frag:(dataFrags state) }
     PROC _ _ -> put $ state { procFrags = frag:(procFrags state) }
 
--- translate access in current frame 
+-- translate access in current frame
 accessToMem :: Access -> Exp
 accessToMem (_, access) =
   case access of
@@ -151,7 +151,7 @@ accessToMem (_, access) =
 getVarEntry :: String -> State TranslateState IExp
 getVarEntry symbol = do
   state <- get
-  let { mem = foldl f (TEMP Temp.fp) (takeWhile notFound (levels state)) }
+  let { mem = foldl f (TEMP Temp.fp) (takeWhile notFound (levels state)) }  --what is this temp.fp? cannot find it anywhere else
   return $ Ex mem
   where notFound (Level _ env) =
           case HashMap.lookup symbol env of
@@ -222,7 +222,7 @@ translateStatF (Ann (Subroutine stms) _) = do
   stms' <- translateStatListF stms
   popLevel
   return $ Nx stms'
-  
+
 translateExprF :: ExprF () -> State TranslateState IExp
 translateExprF (Ann (IntLiter i) _) = return $ CONSTI i
 translateExprF (Ann (BoolLiter b) _) =
@@ -233,7 +233,7 @@ translateExprF (Ann (CharLiter c) _) = return $ Ex (CONSTC c)
 translateExprF (Ann (StringLiter s) _) = do
   label <- newLabel
   addFragment $ STRING label s
-  return $ Ex (NAME label) 
+  return $ Ex (NAME label)
 
 -- need to call system function to allocate memory
 translateExprF (Ann (ArrayLiter a) _) = undefined
@@ -249,7 +249,7 @@ translateExprF (Ann (ArrayElem id exprs) (_, t)) = do
   exps <- mapM translateExprF exprs
   let { (mem, _) = foldl f (a, t) (map unEx exps) }
   return $ Ex mem
-  where f :: (Exp, Type) -> Exp 
+  where f :: (Exp, Type) -> Exp
         f (mem, TArray t) exp =
           (MEM $ BINOP PLUS mem (BINOP MUL exp addrSize) , t)
         f (mem, t) exp =
@@ -258,32 +258,32 @@ translateExprF (Ann (ArrayElem id exprs) (_, t)) = do
                          TBool -> intSize
                          TChar -> charSize
                          TPair _ _ -> addrSize
-                         _ -> intSize  in 
+                         _ -> intSize  in
           (MEM $ BINOP PLUS mem (BINOP MUL exp size), t)
-            
+
 
 translateBuiltInFuncAppF :: FuncAppF () -> State TranslateState IExp
 translateBuiltInFuncAppF (Ann (FuncApp t id exprs) _) = do
   exps <- map translateExprF exprs
   let { Ann (Ident symbol) _ = id }
-  case id of
+  case id of --should be symbol ??
     "read" -> translateRead
     "free" -> translateFree
     "print" -> translatePrint
     "println" -> translatePrintln
     "len" -> translate
-    "*" -> return $ binexp MUL 
-    "/" -> return $ binexp DIV 
-    "%" -> return $ binexp MOD 
-    "+" -> return $ binexp PLUS 
+    "*" -> return $ binexp MUL
+    "/" -> return $ binexp DIV
+    "%" -> return $ binexp MOD
+    "+" -> return $ binexp PLUS
     "-" -> return $ binexp MINUS
     "&&" -> return $ binexp AND
     "||" -> return $ binexp OR
-    ">" -> return $ condition GT 
-    ">=" -> return $ condition GE 
-    "<" -> return $ condition LT 
-    "<=" -> return $ condition LE 
-    "==" -> return $ condition EQ 
+    ">" -> return $ condition GT
+    ">=" -> return $ condition GE
+    "<" -> return $ condition LT
+    "<=" -> return $ condition LE
+    "==" -> return $ condition EQ
     "!=" -> return $ condition NE
     otherwise -> fail "not predicted situation"
  where binexp bop exps =
@@ -298,17 +298,37 @@ translateUserFuncAppF (Ann (FuncApp id exprs) _) = undefined
 
 
  -- For lily and audrey
-translateLen :: String -> StateTranslateState IExp
-translateLen s = undefined
 
-translateOrd :: Exp -> StateTranslateState IExp
-translateOrd e = undefined
+ -- can not be type here need an expr
+translateLen :: EXP -> State TranslateState IExp
+-- assume n is msg_ or any array address
+translateLen arr = return (Nx $ SEQ (MOVE reg (MEM arr) (MOVE reg (MEM reg))))
+  where
+    reg =  TEMP newTemp
 
-translateFst :: Exp -> StateTranslateState IExp
-translateFst e = undefined
+translateChr :: EXP -> State TranslateState IExp
+translateChr t@(TEMP temp) = return (Nx $ PUSH t)
+translateChr m = return (Nx $ SEQ (MOVE reg m) (PUSH reg)) -- memory or int
+  where
+    reg = TEMP newTemp
 
-translateSnd :: Exp -> StateTranslateState IExp
-translateSnd e = undefined
+-- not a fraction
+translateOrd :: Exp -> (State TranslateState IExp, Int)
+--pre: e is (CONST Char)
+translateOrd e = (return (Nx $ MOVE (TEMP newTemp) e), 1) --STRB
+
+translateFst :: Exp -> Type -> (State TranslateState IExp, Int)
+translateFst e (TPair t1 t2)
+  = (return  Nx $ SEQ (MOVE reg (MEM e)) (MOVE reg (MEM reg))), typeLen t1)
+    where
+       reg = TEMP newTemp
+
+translateSnd :: Exp -> Type ->  (State TranslateState IExp, Int)
+translateSnd e (TPair t1 t2)
+  = (return  Nx $ SEQ (MOVE reg (MEM e)) (MOVE reg (MEM sndPos))), typeLen t2)
+    where
+       reg = TEMP newTemp
+       sndPos = BINEXP PLUS reg (typeLen t1)
 
 -- for built-in function below, need to generate code and
 -- add them to segment list
@@ -328,5 +348,3 @@ translatePrintln = undefined
 
 translateFree :: Type -> State TranslateState ()
 translateFree = undefined
-
-
