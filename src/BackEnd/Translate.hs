@@ -315,36 +315,117 @@ translateChr m = return (Nx $ SEQ (MOVE reg m) (PUSH reg)) -- memory or int
 -- not a fraction
 translateOrd :: Exp -> (State TranslateState IExp, Int)
 --pre: e is (CONST Char)
-translateOrd e = (return (Nx $ MOVE (TEMP newTemp) e), 1) --STRB
+translateOrd e = (return (Nx $ MOVE (TEMP newTemp) e), 1) --STRB hence need to record length
 
-translateFst :: Exp -> Type -> (State TranslateState IExp, Int)
-translateFst e (TPair t1 t2)
+translateFst :: Exp -> (State TranslateState IExp, Int)
+translateFst e
   = (return  Nx $ SEQ (MOVE reg (MEM e)) (MOVE reg (MEM reg))), typeLen t1)
     where
        reg = TEMP newTemp
 
-translateSnd :: Exp -> Type ->  (State TranslateState IExp, Int)
+translateSnd :: Exp -> (State TranslateState IExp, Int)
 translateSnd e (TPair t1 t2)
   = (return  Nx $ SEQ (MOVE reg (MEM e)) (MOVE reg (MEM sndPos))), typeLen t2)
     where
        reg = TEMP newTemp
-       sndPos = BINEXP PLUS reg (typeLen t1)
+       sndPos = BINEXP PLUS reg (CONSTI 4)
+
+translateFree :: EXP -> State TranslateState IExp
+-- string & array: need no fragmentation
+translateFree e = SEQ (MOVE (TEMP newTemp) (MEM e)) (JUMP (NAME "free") ["free"])
 
 -- for built-in function below, need to generate code and
 -- add them to segment list
--- 1.generate function
+-- 1. generate function
 -- 2. add to func segment list
-translateRead :: Type -> State TranslateState ()
-translateRead = undefined
 
-translateFree :: Type -> State TranslateState ()
-translateFree = undefined
+-- ***NOT INCLUDING PUSH POP***
+--pre: FRAGMENT TRANSLATES CAN ONLY BE CALLED AFTER VISITING THE WHOLE TREE
+-- AND CAN ONLY BE CALLED ONCE EACH
+
+translateRead :: Type -> State TranslateState ()
+translateRead type = do
+  addFragment (STRING msg (str type)) 
+  addFragment (PROC statement (f type))
+    where
+      msg = newLabel
+      statement = SEQ (MOVE reg1 reg0) (SEQ (MOVE reg0 msg) (SEQ reg0_plus_4 (CALL (NAME l) [])))
+      reg0 = TEMP newTemp
+      reg1 = TEMP newTemp
+      reg0_plus_4 = MOVE reg0 (BINEXP PLUS reg0 (CONSTI 4))
+      str TInt = "%d\0"
+      str TChar = "%c\0"
+      f TInt = Frame.newFrame "p_read_int"
+      f TChar = Frame.newFrame "p_read_char"
+
+
+translateFreePair :: State TranslateState ()
+-- pair: new fragment 
+-- pre: Includes throw run time error and print
+translateFreePair = do
+  addFragment (PROC statement frame)
+  addFragment (STRING msg "NullReferenceError: dereference a null reference\n\0")
+    where
+      msg = newLabel
+      reg0 = TEMP newTemp
+      frame = Frame.newFrame "p_free_pair"
+      error_label = "p_throw_runtime_error"
+      statement = SEQ (LABEL "free") (SEQ (PUSH reg0) free_all)
+      check_null_ptr = SEQ (unCx $ Cx (CJUMP EQ (CONSTI 0) (reg0) "error" "free")) run_error
+      run_error = SEQ (LABEL "error") (SEQ (MOVE reg0 (NAME msg)) (JUMP (NAME error_label) [error_label]))
+      free1 = SEQ (MOVE (reg0) (MEM reg0)) bl_free
+      free2 = SEQ (POP reg0) (SEQ (MOVE reg0 (BINEXP PLUS reg0 (CONSTI 4))) bl_free)
+      free_all = SEQ (free1 (SEQ free2 (SEQ (POP reg0) bl_free)))
+      bl_free = JUMP (NAME "free") ["free"]
+
 
 translatePrint :: Type -> State TranslateState ()
-translatePrint = undefined
+translatePrint TStr = do
+  addFragment (PROC statement frame)
+  addFragment (STRING msg "%.*s\0")
+    where
+      msg = newLabel
+      reg0 = TEMP newTemp
+      reg1 = TEMP newTemp
+      reg2 = TEMP newTemp
+      frame = Frame.newFrame "p_print_string"
+      s1 = MOVE reg1 (MEM reg0)
+      s2 = MOVE reg2 (BINEXP PLUS reg0 (CONSTI 4))
+      s3 = MOVE reg0 (NAME msg)
+      s4 = MOVE reg0 (BINEXP PLUS reg0 (CONSTI 4))
+      s5 = JUMP (NAME "printf") ["printf"]
+      s6 = MOVE reg0 (CONSTI 0)
+      s7 = JUMP (NAME "fflush") ["fflush"]
+      statement = SEQ s1 (SEQ s2 (SEQ s3 (SEQ s4 (SEQ s5 (SEQ s6 s7)))))
+
+translatePrint TChar = do
+  addFragment (PROC statement frame)
+  addFragment (STRING msg "%d\0")
+    where
+      msg = newLabel
+      reg0 = TEMP newTemp
+      reg1 = TEMP newTemp
+      frame = Frame.newFrame "p_print_int"
+      s1 = MOVE reg1 reg0
+      s2 = MOVE reg0 (NAME msg)
+      s3 = MOVE reg0 (BINEXP PLUS reg0 (CONSTI 4))
+      s4 = JUMP (NAME "printf") ["printf"]
+      s5 = MOVE reg0 (CONSTI 0)
+      s6 = JUMP (NAME "fflush") ["fflush"]
+      statement = SEQ s1 (SEQ s2 (SEQ s3 (SEQ s4 (SEQ s5 s6))))
+
 
 translatePrintln :: Type -> State TranslateState ()
-translatePrintln = undefined
-
-translateFree :: Type -> State TranslateState ()
-translateFree = undefined
+translatePrintln _ = do
+  addFragment (STRING msg "\0") 
+  addFragment (PROC statement frame)
+    where
+      msg = newLabel
+      reg0 = TEMP newTemp
+      frame = Frame.newFrame "p_print_ln"
+      s1 = MOVE reg0 (NAME msg)
+      s2 = MOVE reg0 (BINEXP PLUS reg0 (CONSTI 4))
+      s3 = JUMP (NAME "puts") ["puts"]
+      s4 = MOVE reg0 (CONSTI 0)
+      s5 = JUMP (NAME "fflush") ["fflush"]
+      statement = SEQ s1 (SEQ s2 (SEQ s3 (SEQ s4 (SEQ s5))))

@@ -1,0 +1,5 @@
+begin
+    string s = "hello";
+    println "Something";
+    free s
+end
