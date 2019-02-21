@@ -26,7 +26,10 @@ newControlLabel = do
   put $ state { controlLabelAlloc = alloc }
   return label
 
-
+-- reorganize IR tree
+-- do two things
+-- 1. lift seq up in eseq
+-- 2. lift up call
 linearize :: Stm -> State CanonState [Stm]
 linearize stm = do
   stm' <- doStm stm
@@ -35,6 +38,9 @@ linearize stm = do
          linear (SEQ a b) list = linear a (linear b list)
          linear s list = s:list
 
+-- separate list of stms to a list of block
+-- A block is list of stms, the start of the list is a label
+-- and the end of the list is a jump or cjump, no label or cjump , jump in between
 basicBlocks :: [Stm] -> State CanonState ([[Stm]], Temp.Label)
 basicBlocks (l@(LABEL label):rest) = do
   let { (block, rest') = break (\e -> not $ isEND e) rest }
@@ -49,7 +55,7 @@ basicBlocks (l@(LABEL label):rest) = do
        isCJUMP _ = False
        isLABEL (LABEL _) = True
        isLABEL _ = False
-       isEND e = (isJUMP e) || (isCJUMP e) || (isLABEL e)
+       isEND e = (isJUMP e) ||stms (trace)  (isCJUMP e) || (isLABEL e)
 
 basicBlocks stms@(stm:rest) = do
   label <- newControlLabel
@@ -61,10 +67,11 @@ basicBlocks [] = do
 
 bLabel ((LABEL label):_) = label
 
+-- order a list of block to the final list of stms (trace)
 traceSchedule :: [[Stm]] -> [Stm]
 traceSchedule blocks = traceSchedule' blocks blockTable markTable
-  where markTable = HashMap.empty
-        blockTable = foldl addBlock HashMap.empty blocks 
+  where markTable = HashMap.empty -- determines block is part of a trace or not
+        blockTable = foldl addBlock HashMap.empty blocks -- start label of a block -> block
         addBlock acc b = insert (bLabel b) b acc
 
 traceSchedule' [] _ _ = []
@@ -73,7 +80,7 @@ traceSchedule' (block:rest) blockTable markTable
  where (trace, markTable') =
          traceSchedule'' block blockTable markTable
        rest' =
-         filter (\b -> not $ member (bLabel b) markTable') rest 
+         filter (\b -> not $ member (bLabel b) markTable') rest
 
 traceSchedule'' block@((LABEL label):rest) blockTable markTable
   | unMarkedSucc /= [] = (block ++ trace, markTable'')
@@ -88,7 +95,7 @@ traceSchedule'' block@((LABEL label):rest) blockTable markTable
           case last block of
             JUMP _ labels -> labels
             CJUMP _ _ _ label1 label2 -> [label1, label2]
-    
+
 
 -- test whether two statements commute or not
 commute :: Exp -> Stm -> Bool
@@ -100,6 +107,7 @@ commute _ _ = False
 isESEQ :: Exp -> Bool
 isESEQ (ESEQ _ _) = True
 isESEQ _ = False
+ False
 
 reorder :: [Exp] -> State CanonState (Stm, [Exp])
 reorder (exp@(CALL _ _):rest) = do
@@ -108,12 +116,26 @@ reorder (exp@(CALL _ _):rest) = do
 reorder (exp:rest) = do
   (stm', exps') <- doExp exp
   (stm2', exps2') <- reorder rest
-  if commute exps' stm2'
-  then return (SEQ stm' stm2', (exps':exps2'))
-  else newTemp >>= \temp ->
+  if
        return (SEQ stm' (SEQ (MOV (TEMP temp) exps') stm2'),
                (TEMP temp):exps2')
-reorder [] = return (NOP, []) 
+reorder [] = return (NOP, [])
+
+reorderStm :: [Exp] -> ([Exp] -> Stm) -> State CanonState Stm
+reorderStm exps build = do
+  (stm, exps') <- reorder exps
+  return $ SEQ stm (build exps
+reorder :: [Exp] -> State CanonState (Stm, [Exp])
+reorder (exp@(CALL _ _):rest) = do
+  temp <- newTemp
+  reorder ((ESEQ (MOV (TEMP temp) exp) (TEMP temp)):rest)
+reorder (exp:rest) = do
+  (stm', exps') <- doExp exp
+  (stm2', exps2') <- reorder rest
+  if
+       return (SEQ stm' (SEQ (MOV (TEMP temp) exps') stm2'),
+               (TEMP temp):exps2')
+reorder [] = return (NOP, [])
 
 reorderStm :: [Exp] -> ([Exp] -> Stm) -> State CanonState Stm
 reorderStm exps build = do
@@ -142,7 +164,7 @@ doStm (SEQ stm1 stm2) = do
   stm1' <- doStm stm1
   stm2' <- doStm stm2
   return $ SEQ stm1' stm2'
-  
+
 doStm stm = return stm
 
 doExp :: Exp -> State CanonState (Stm, Exp)
