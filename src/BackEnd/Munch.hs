@@ -635,28 +635,33 @@ munch file = do
   putStrLn ""
   ast <- parseFile file
   ast' <- analyzeAST ast
-  let
-      (stm, s) = runState (Translate.translate ast') Translate.newTranslateState
-      (procFrags, s') = runState (genProcFrags (Set.toList $ builtInSet s)) s
-      dataFrags = map munchDataFrag (Translate.dataFrags s')
+  let (stm, s) = runState (Translate.translate ast') Translate.newTranslateState
+      (builtInFrags, s') = runState (genProcFrags (Set.toList $ builtInSet s)) s -- generate builtIn
+      userFrags = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags s)
+      dataFrags = map munchDataFrag ( Translate.dataFrags s' )
       canonState = CanonState { C.tempAlloc = Translate.tempAlloc s',
-                                C.controlLabelAlloc = Translate.controlLabelAlloc s'};
-      stms = evalState (transform stm) canonState
-      ms = evalState (munchmany stms) s'
-      substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] ms)
+                                C.controlLabelAlloc = Translate.controlLabelAlloc s'}
+      (stm', s'') = runState (transform stm) canonState
+      transState = s' { Translate.tempAlloc = C.tempAlloc s'',
+                        Translate.controlLabelAlloc = C.controlLabelAlloc s'' }
+      (userFrags', s''') = runState (munchmany userFrags) transState -- munch functions
+      arms = evalState (munchmany stm') s'''
+      substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] arms)
       out = filter (\x -> not $ containsDummy x) substitute
-      totalOut = intercalate ["\n"] (map (map show) procFrags) ++ ["\n"] ++
+      substitute' = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] userFrags')
+      out' = filter (\x -> not $ containsDummy x) substitute'
+      totalOut = intercalate ["\n"] (map (map show) builtInFrags) ++ ["\n"] ++
                  concat (map (lines . show) (concat dataFrags)) ++ ["\n"] ++
-                 (map show out)
+                 (map show (out' ++ out))
   mapM putStrLn $ zipWith (++) (map (\x -> (show x) ++"  ") [0..]) totalOut
   putStrLn ""
   return ()
+                      
   where genProcFrags :: [Int] -> State TranslateState [[ASSEM.Instr]]
         genProcFrags ids = do
           let gens = map (\n -> genBuiltIns !! n) ids
           pfrags <- foldM (\acc f -> f >>= \pfrag -> return $ acc ++ [pfrag]) [] gens
           return pfrags
-
 
 munchmany [] = return []
 munchmany (x:xs) = do
@@ -856,3 +861,4 @@ p_check_divide_by_zero = do
           ld_cond_msg_toR0 msg ARM.EQ,
           ljump_cond "p_throw_runtime_error" ARM.EQ,
           poppc]
+
