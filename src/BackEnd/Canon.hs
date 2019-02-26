@@ -83,14 +83,14 @@ transform :: Stm -> State CanonState [Stm]
 transform stm = do
   stms <- linearize stm
   blocks <- basicBlocks stms
-  return $ traceSchedule $ fst blocks 
+  return $ traceSchedule $ fst blocks
 
 transform' :: Stm -> State CanonState [[Stm]]
 transform' stm = do
   stms <- linearize stm
   (stms', _) <- basicBlocks stms
   return stms'
-  
+
 newTemp :: State CanonState Temp.Temp
 newTemp = do
   state <- get
@@ -170,7 +170,7 @@ traceSchedule'' block@((LABEL label):rest) blockTable markTable
             LABEL _ -> []
             JUMP _ labels -> labels
             CJUMP _ _ _ label1 label2 -> [label2, label1]
-    
+
 
 -- test whether two statements commute or not
 commute :: Exp -> Stm -> Bool
@@ -208,6 +208,12 @@ reorderExp exps build = do
   return (stm', build $! exps')
 
 doStm :: Stm -> State CanonState Stm
+doStm (MOV (TEMP t) (CALL (NAME f) es))
+  = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+
+doStm (MOV (TEMP t) (CALL e es))
+  = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
+
 doStm (MOV (TEMP t) b)
   = reorderStm [b] (\(b:_) -> MOV (TEMP t) b)
 
@@ -237,9 +243,15 @@ doStm (CJUMP rop e1 e2 label1 label2)
 doStm (SEQ stm1 stm2) = do
   stm1' <- doStm stm1
   stm2' <- doStm stm2
-  return $ cleanStm $ SEQ stm1' stm2'
+  return $ SEQ stm1' stm2'
 
-doStm stm = return $ cleanStm $ stm
+doStm (EXP (CALL (NAME f) es))
+  = reorderStm es (\es -> EXP (CALL (NAME f) es))
+
+doStm (EXP (CALL e es))
+  = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
+doStm (EXP e)
+  = reorderStm [e] (\(e:_) -> EXP e)
 
 doStm stm = return stm
 
@@ -261,10 +273,13 @@ doExp exp@(MEM e@(BINEXP bop e1 e2)) = do
 doExp exp@(BINEXP bop e1 e2) = do
   if isOneLayer e1 && isOneLayer e2
   then return (NOP, exp)
-  else reorderExp [e1, e2] (\(e1:e2:_) -> BINEXP bop e1 e2) 
+  else reorderExp [e1, e2] (\(e1:e2:_) -> BINEXP bop e1 e2)
 
 doExp (MEM e)
   = reorderExp [e] (\(e:_) -> MEM e)
+
+doExp (CALL (NAME f) es)
+  = reorderExp es (\es -> CALL (NAME f) es)
 
 doExp (CALL e es)
   = reorderExp (e:es) (\(e:es) -> CALL e es)
@@ -299,7 +314,7 @@ testESEQ5 = BINEXP PLUS (MEM (CONSTI 23)) (ESEQ (MOV (TEMP 0) (TEMP 1)) (CONSTI 
 
 
 testLinear1 = SEQ (MOV t0 t1) (MOV t0 t2)
-testLinear2 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t0 t1) (CONSTI 1))) 
+testLinear2 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t0 t1) (CONSTI 1)))
 testLinear3 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t2 (CONSTI 1)) t2))
 testLinear4 = SEQ (MOV t0 t1) (MOV t0 (BINEXP PLUS (ESEQ s1 (CONSTI 3)) (CONSTI 5)))
 testLinear5 = SEQ (MOV t0 t1) (MOV t0 testESEQ4)
