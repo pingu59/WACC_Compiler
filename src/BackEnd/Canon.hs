@@ -198,6 +198,12 @@ reorderExp exps build = do
   return (cleanStm $ stm', build exps')
 
 doStm :: Stm -> State CanonState Stm
+doStm (MOV (TEMP t) (CALL (NAME f) es))
+  = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+  
+doStm (MOV (TEMP t) (CALL e es))
+  = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
+ 
 doStm (MOV (TEMP t) b)
   = reorderStm [b] (\(b:_) -> MOV (TEMP t) b)
 
@@ -215,9 +221,15 @@ doStm (CJUMP rop e1 e2 label1 label2)
 doStm (SEQ stm1 stm2) = do
   stm1' <- doStm stm1
   stm2' <- doStm stm2
-  return $ cleanStm $ SEQ stm1' stm2'
+  return $ SEQ stm1' stm2'
 
-doStm stm = return $ cleanStm $ stm
+doStm (EXP (CALL (NAME f) es))
+  = reorderStm es (\es -> EXP (CALL (NAME f) es))
+
+doStm (EXP (CALL e es))
+  = reorderStm (e:es) (\(e:es) -> EXP (CALL e es)) 
+doStm (EXP e)
+  = reorderStm [e] (\(e:_) -> EXP e)
 
 isOneLayer (CONSTI _) = True
 isOneLayer (CONSTC _) = True
@@ -246,10 +258,13 @@ doExp exp@(BINEXP bop e1 e2) = do
 
 doExp (MEM e)
   = reorderExp [e] (\(e:_) -> MEM e)
-
+  
+doExp (CALL (NAME f) es)
+  = reorderExp es (\es -> CALL (NAME f) es)
+  
 doExp (CALL e es)
   = reorderExp (e:es) (\(e:es) -> CALL e es)
-
+  
 doExp (ESEQ stm e) = do
   stm' <- doStm stm
   (stm'', e') <- doExp e
