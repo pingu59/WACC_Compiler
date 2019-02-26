@@ -7,7 +7,7 @@ import BackEnd.IR
 data Instr = IOPER  { assem :: Arm.Instr,
                       dst :: [Temp.Temp],
                       src :: [Temp.Temp],
-                      jump :: [String]}
+                      jump :: [Temp.Label]}
            | ILABEL { assem :: Arm.Instr,
                       lab :: Temp.Label }
            | IMOV   { assem :: Arm.Instr,

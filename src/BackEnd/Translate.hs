@@ -358,11 +358,10 @@ translateExprF (Ann (BracketExpr expr) _) = translateExprF expr
 translateExprF (Ann (IdentExpr id) (_, t)) = do
   let { Ann (Ident symbol) _ = id }
   exp <- getVarEntry symbol  -- add memory access
-  let var = MEM exp
   case t of
     TChar -> return $ Ex (CALL (NAME "#oneByte") [exp])
     TBool -> return $ Ex (CALL (NAME "#oneByte") [exp])
-    otherwise -> return $ Ex exp
+    otherwise -> return $ Ex (CALL (NAME "#fourByte") [exp])
 
 translateExprF (Ann (FuncExpr f) _) = translateFuncAppF f
 translateExprF (Ann Null _) = return $ Ex $ MEM (CONSTI 0)
@@ -401,8 +400,12 @@ translateBuiltInFuncAppF (Ann (FuncApp t id exprs) _) = do
     "free" -> do { e <- translateFree (head inputTs) exps';
                    e' <- unEx e;
                    return $ Nx (EXP e') }
-    "print" -> translatePrint (head inputTs) exps'
-    "println" -> translatePrintln (head inputTs) exps'
+    "print" -> do { e <- translatePrint (head inputTs) exps';
+                    e' <- unEx e;
+                    return $ Nx (EXP e') }
+    "println" -> do { e <- translatePrintln (head inputTs) exps';
+                      e' <- unEx e;
+                      return $ Nx (EXP e') }
     "newpair" -> translateNewPair (TPair (inputTs !! 0) (inputTs !! 1)) exps'
     "fst" -> translatePairAccess ret exps' "fst"
     "snd" -> translatePairAccess ret exps' "snd"
@@ -461,9 +464,9 @@ translatePrint t exps = do
 translatePrintln :: Type -> [Exp] -> State TranslateState IExp
 translatePrintln t exps = do
   print <- translatePrint t exps
-  print' <- unEx print
+  unexPrint <- unEx print
   addBuiltIn id_p_print_ln
-  return $ Nx (SEQ (EXP print') (EXP (CALL (NAME "p_print_ln") [])))
+  return $ Ex $ CALL (NAME "#p_print_ln") [unexPrint]
 
 {-
  BL MALLOC required here:

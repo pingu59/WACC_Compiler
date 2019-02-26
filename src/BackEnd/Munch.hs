@@ -153,6 +153,12 @@ munchExp (CALL (NAME "#oneByte") [exp]) = do
   return (i ++ [IMOV {assem = S_ (ARM.LDR SB AL) (RTEMP newt) (Imm (RTEMP t) 0)
                       , dst = [t], src = [newt]}], newt)
 
+munchExp (CALL (NAME "#fourByte") [exp]) = do
+  (i, t) <- munchExp exp
+  newt <- newTemp
+  return (i ++ [IMOV {assem = S_ (ARM.LDR W AL) (RTEMP newt) (Imm (RTEMP t) 0)
+                      , dst = [t], src = [newt]}], newt)
+
 {-If munched stm is of length 2 here then it must be a SEQ conaing a naive stm and a label -}
 munchExp (ESEQ (SEQ cjump@(CJUMP rop _ _ _ _) (SEQ false true)) e) = do
   cinstr <- munchStm cjump
@@ -186,27 +192,6 @@ munchExp (ESEQ stm e) = do
   ls <- munchStm stm
   (i, t) <- munchExp e
   return (ls++i, t)
-
--- TODO: add function type information
--- push all the parameters to the stack
-munchExp (CALL (NAME f) es) = do
-  pushParams <- mapM munchStm (concat (map pushParam es))
-  return (concat pushParams ++ [bToFunc] ++ adjustSP, 0)
-  where pushParam exp =
-          [IR.MOV (TEMP Frame.sp) (BINEXP MINUS (TEMP Frame.sp) (CONSTI 4)),
-           IR.MOV (MEM (TEMP Frame.sp)) exp]
-        adjustSP = if totalParamSize == 0 then [] else 
-          [IOPER { assem = CBS_ (ADD NoSuffix AL) SP SP (IMM totalParamSize),
-                  src = [Frame.sp],
-                  dst = [Frame.sp],
-                  jump = [] }]
-        bToFunc = 
-          IOPER { assem = BRANCH_ (B AL) (L_ f),
-                  src = [],
-                  dst = [],
-                  jump = [f] }
-        totalParamSize = (length es) * 4
-  
 
 munchExp (CALL f es) = do
   (fi, ft) <- munchExp f -- assume result returned in ft
@@ -413,10 +398,6 @@ opVal (ARM.ADD _ _) = 1
 opVal _ = -1
 
 munchStm :: Stm -> State TranslateState [ASSEM.Instr] -- everything with out condition
-
-munchStm (EXP call@(CALL _ _)) = do
-  (intrs, reg) <- munchExp call
-  return intrs
 
 munchStm (LABEL label) = return [ILABEL {assem = LAB label, lab = label}]
 
