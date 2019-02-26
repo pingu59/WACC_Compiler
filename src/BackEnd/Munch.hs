@@ -32,6 +32,14 @@ justret e = do
 munchExp :: Exp -> State TranslateState ([ASSEM.Instr], Temp)
 munchExp (CALL (NAME "#retVal") [e]) = justret e
 
+munchExp (CALL (NAME "malloc") [CONSTI i]) = do
+  t <- newTemp
+  let ldr = IMOV { assem = S_ (LDR W AL) (R0) (NUM (i)),
+                  src = [], dst = [0]}
+      move = IMOV { assem = MC_ (ARM.MOV AL) (RTEMP t) (R R0),
+                  src = [t], dst = [0]}
+  return ([ldr, ljump_to_label "malloc", move], dummy)
+
 munchExp (CALL (NAME "#memaccess") [CONSTI i]) = do
   t <- newTemp
   return ([IOPER {assem = CBS_ (ADD NoSuffix AL) (RTEMP t) SP (IMM i),
@@ -147,11 +155,21 @@ munchExp (BINEXP MOD e1 e2) = do
       return $ (i1 ++ i2 ++ [moveDividend, moveDivisor, check ,modInstr], 1)
 
 --load a byte from sp
-munchExp (CALL (NAME "#oneByte") [exp]) = do
+munchExp (MEM (CALL (NAME "#oneByte") [CALL (NAME "#memaccess") [CONSTI i]])) = do
+  newt <- newTemp
+  return ([IMOV {assem = S_ (ARM.LDR SB AL) (RTEMP newt) (Imm SP i)
+                      , dst = [newt], src = [13]}], newt)
+
+munchExp (CALL (NAME "#oneByte") [CALL (NAME "#memaccess") [CONSTI i]]) = do
+  newt <- newTemp
+  return ([IMOV {assem = CBS_ (ADD NoSuffix AL) (RTEMP newt) SP (IMM i)
+                      , dst = [newt], src = [13]}], newt)
+
+munchExp (CALL (NAME "#oneByte") [MEM exp]) = do
   (i, t) <- munchExp exp
   newt <- newTemp
   return (i ++ [IMOV {assem = S_ (ARM.LDR SB AL) (RTEMP newt) (Imm (RTEMP t) 0)
-                      , dst = [t], src = [newt]}], newt)
+                      , dst = [newt], src = [t]}], newt)
 
 {-If munched stm is of length 2 here then it must be a SEQ conaing a naive stm and a label -}
 munchExp (ESEQ (SEQ cjump@(CJUMP rop _ _ _ _) (SEQ false true)) e) = do
@@ -387,6 +405,9 @@ optimise :: [ASSEM.Instr] -> [ASSEM.Instr]
 optimise (IOPER { assem = CBS_ a@(ADD NoSuffix AL) (RTEMP t1) SP (IMM i)} :
           IMOV { assem = S_ op (RTEMP t3) (Imm (RTEMP t4) i')}:remain)
   | t4 == t1 = (IMOV { assem = S_ op (RTEMP t3) (Imm SP (i+i')), src = [13], dst = [t3]}):(optimise remain)
+optimise (IMOV { assem = CBS_ a@(ADD NoSuffix AL) (RTEMP t1) SP (IMM i)} :
+          IMOV { assem = S_ op (RTEMP t3) (Imm (RTEMP t4) i')}:remain)
+  | t4 == t1 = (IMOV { assem = S_ op (RTEMP t3) (Imm SP (i+i')), src = [13], dst = [t3]}):(optimise remain)
 -- PRE-INDEX --
 optimise ((IOPER { assem = (CBS_ c (RTEMP t11) (RTEMP t12) (IMM int))}) :
           (IMOV { assem = (S_ sl (RTEMP t21) (Imm (RTEMP t22) 0))}) :remain)
@@ -585,11 +606,7 @@ accessPair isfst typestr [e] = do
       check = IOPER { assem = BRANCH_ (BL AL) (L_ "p_check_null_pointer")
                       , src = [0], dst = [], jump = ["p_check_null_pointer"]}
       s1 = IMOV {assem = (S_ (LDR W AL) (RTEMP t) (Imm (RTEMP t) offset)), src = [t], dst = [t]}
-      s2_suffix = if one then SB else W
-      s2 = IMOV {assem = (S_ (LDR s2_suffix AL) (RTEMP t) (Imm (RTEMP t) 0)), src = [t], dst = [t]}
-      s3_suffix = if one then B_ else W
-      s3 = IMOV {assem = (S_ (STR s3_suffix AL) (RTEMP t) (Imm (RTEMP 13) 0)), src = [t, 13], dst = []}
-  return (i ++ [getpaddr, check, s1, s2, s3], 13)
+  return (i ++ [getpaddr, check, s1], t)
 
 -------------------- Utilities ---------------------
 condIR = [IR.EQ, IR.LT, IR.LE, IR.GT, IR.GE, IR.NE]

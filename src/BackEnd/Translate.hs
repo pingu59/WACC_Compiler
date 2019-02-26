@@ -490,7 +490,7 @@ translatePairAccess :: Type -> [Exp] -> String -> State TranslateState IExp
 --   = return $ Ex $ CALL (NAME ("#" ++ str ++ " " ++ (show' t1) ++ " " ++ (show' t2))) exps
 -- translatePairAccess t _ _ = fail $ show t
 translatePairAccess t exps str
-  = return $ Ex $ CALL (NAME ("#" ++ str ++ " " ++ (show' t) )) exps
+  = return $ Ex $ MEM $ CALL (NAME ("#" ++ str ++ " " ++ (show' t) )) exps
 
 -- turn IExp to Exp
 unEx :: IExp -> State TranslateState Exp
