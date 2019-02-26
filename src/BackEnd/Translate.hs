@@ -359,8 +359,8 @@ translateExprF (Ann (IdentExpr id) (_, t)) = do
   let { Ann (Ident symbol) _ = id }
   exp <- getVarEntry symbol  -- add memory access
   case t of
-    TChar -> return $ Ex (CALL (NAME "#oneByte") [exp])
-    TBool -> return $ Ex (CALL (NAME "#oneByte") [exp])
+    TChar -> return $ Ex $ MEM (CALL (NAME "#oneByte") [exp])
+    TBool -> return $ Ex $ MEM (CALL (NAME "#oneByte") [exp])
     otherwise -> return $ Ex  $ MEM (exp)
 
 translateExprF (Ann (FuncExpr f) _) = translateFuncAppF f
