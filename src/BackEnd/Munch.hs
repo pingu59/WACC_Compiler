@@ -153,12 +153,6 @@ munchExp (CALL (NAME "#oneByte") [exp]) = do
   return (i ++ [IMOV {assem = S_ (ARM.LDR SB AL) (RTEMP newt) (Imm (RTEMP t) 0)
                       , dst = [t], src = [newt]}], newt)
 
-munchExp (CALL (NAME "#fourByte") [exp]) = do
-  (i, t) <- munchExp exp
-  newt <- newTemp
-  return (i ++ [IMOV {assem = S_ (ARM.LDR W AL) (RTEMP newt) (Imm (RTEMP t) 0)
-                      , dst = [t], src = [newt]}], newt)
-
 {-If munched stm is of length 2 here then it must be a SEQ conaing a naive stm and a label -}
 munchExp (ESEQ (SEQ cjump@(CJUMP rop _ _ _ _) (SEQ false true)) e) = do
   cinstr <- munchStm cjump
@@ -192,6 +186,27 @@ munchExp (ESEQ stm e) = do
   ls <- munchStm stm
   (i, t) <- munchExp e
   return (ls++i, t)
+
+-- TODO: add function type information
+-- push all the parameters to the stack
+munchExp (CALL (NAME f) es) = do
+  pushParams <- mapM munchStm (concat (map pushParam es))
+  return (concat pushParams ++ [bToFunc] ++ adjustSP, 0)
+  where pushParam exp =
+          [IR.MOV (TEMP Frame.sp) (BINEXP MINUS (TEMP Frame.sp) (CONSTI 4)),
+           IR.MOV (MEM (TEMP Frame.sp)) exp]
+        adjustSP = if totalParamSize == 0 then [] else
+          [IOPER { assem = CBS_ (ADD NoSuffix AL) SP SP (IMM totalParamSize),
+                  src = [Frame.sp],
+                  dst = [Frame.sp],
+                  jump = [] }]
+        bToFunc =
+          IOPER { assem = BRANCH_ (B AL) (L_ f),
+                  src = [],
+                  dst = [],
+                  jump = [f] }
+        totalParamSize = (length es) * 4
+
 
 munchExp (CALL f es) = do
   (fi, ft) <- munchExp f -- assume result returned in ft
@@ -399,6 +414,10 @@ opVal _ = -1
 
 munchStm :: Stm -> State TranslateState [ASSEM.Instr] -- everything with out condition
 
+munchStm (EXP call@(CALL _ _)) = do
+  (intrs, reg) <- munchExp call
+  return intrs
+
 munchStm (LABEL label) = return [ILABEL {assem = LAB label, lab = label}]
 
 -- moving stack pointer don't need to check overflow
@@ -471,7 +490,6 @@ suffixStm (IR.MOV (MEM me) e) = do -- STR
     return (\c -> (\suff -> i ++ l ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) (Imm (RTEMP s) 0), src = [s], dst = [t]}]))
 
 condStm :: Stm -> State TranslateState (Cond -> [ASSEM.Instr])  --allow for conditions to change
-
 condStm ir@(IR.MOV e (MEM me)) = do
   ret <- suffixStm ir
   return (\c -> ret c W)
@@ -556,7 +574,7 @@ createPair s1 s2 exps = do
       strsndaddr = IMOV { assem = (S_ (STR W AL) R0 (Imm (RTEMP tadddr) 4)), src = [tadddr, 0], dst = []}
       strpaironstack= IMOV { assem = (S_ (STR W AL) (RTEMP tadddr) (Imm (RTEMP 13) 0)), src = [t1, 13], dst = [0]}
   return ([ld8, malloc, strPairAddr] ++ i1 ++ [ld4, malloc, savefst, strfstaddr]
-           ++ i2 ++ [ld4, malloc, savesnd, strpaironstack], Frame.fp)
+           ++ i2 ++ [ld4, malloc, savesnd, strsndaddr, strpaironstack], dummy)
 
 accessPair :: Bool -> String -> [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
 accessPair isfst typestr [e] = do

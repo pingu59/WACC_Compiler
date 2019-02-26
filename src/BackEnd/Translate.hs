@@ -361,10 +361,10 @@ translateExprF (Ann (IdentExpr id) (_, t)) = do
   case t of
     TChar -> return $ Ex (CALL (NAME "#oneByte") [exp])
     TBool -> return $ Ex (CALL (NAME "#oneByte") [exp])
-    otherwise -> return $ Ex (CALL (NAME "#fourByte") [exp])
+    otherwise -> return $ Ex  $ MEM (exp)
 
 translateExprF (Ann (FuncExpr f) _) = translateFuncAppF f
-translateExprF (Ann Null _) = return $ Ex $ MEM (CONSTI 0)
+translateExprF (Ann Null _) = return $ Ex $ CONSTI 0
 
 
 translateFuncAppF :: FuncAppF () -> State TranslateState IExp
