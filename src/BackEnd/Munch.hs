@@ -456,12 +456,12 @@ munchStm (IR.MOV (TEMP 11) (BINEXP bop (TEMP 11) (CONSTI offset))) = do
                   dst = [Frame.fp],
                   jump = [] } ]
 
-munchStm (IR.MOV e (CALL (NAME "#oneByte") [MEM me])) = do
-   ret <- suffixStm (IR.MOV e me)
+munchStm (IR.MOV e (MEM (CALL (NAME "#oneByte") [MEM me]))) = do
+   ret <- suffixStm (IR.MOV e (MEM me))
    return $ ret AL SB
 
-munchStm (IR.MOV (CALL (NAME "#oneByte") [MEM me]) e) = do
-   ret <- suffixStm (IR.MOV me e)
+munchStm (IR.MOV (MEM (CALL (NAME "#oneByte") [MEM me])) e) = do
+   ret <- suffixStm (IR.MOV (MEM me) e)
    return $ ret AL B_
 
 munchStm (SEQ s1 s2) = do
@@ -490,9 +490,28 @@ munchStm x = do
   m <- condStm x
   return $ m AL
 
+is1bAccess "#fst TChar" = True
+is1bAccess "#snd TChar" = True
+is1bAccess "#fst TBool" = True
+is1bAccess "#snd TBool" = True
+is1bAccess "#oneByte" = True
+is1bAccess _ = False
+
 -- ALLOW the suffix + cond of a load / store to change
 suffixStm :: Stm -> State TranslateState (Cond -> SLType -> [ASSEM.Instr])
-suffixStm (IR.MOV (MEM me) e) = do -- STR
+suffixStm this@(IR.MOV (MEM me@(CALL (NAME n) _)) e)
+  | is1bAccess n =  do
+  ss <- suffixStm' this
+  return $ \c -> \suff -> (ss c B_)
+
+suffixStm this@(IR.MOV e (MEM me@(CALL (NAME n) _)))
+  | is1bAccess n = do
+  ss <- suffixStm' this
+  return $ \c -> \suff -> (ss c SB)
+
+suffixStm x = suffixStm' x
+
+suffixStm' (IR.MOV (MEM me) e) = do -- STR
   (i, t) <- munchExp e
   (l, ts, op) <- munchMem me
   if null l then
@@ -501,7 +520,7 @@ suffixStm (IR.MOV (MEM me) e) = do -- STR
     let s = head ts in
     return (\c -> (\suff -> i ++ l ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) (Imm (RTEMP s) 0), src = [s], dst = [t]}]))
 
-suffixStm (IR.MOV e (MEM me)) = do -- LDR
+suffixStm' (IR.MOV e (MEM me)) = do -- LDR
   (i, t) <- munchExp e
   (l, ts, op) <- munchMem me
   if null l then
@@ -605,8 +624,8 @@ accessPair isfst typestr [e] = do
       getpaddr = move_to_r t 0
       check = IOPER { assem = BRANCH_ (BL AL) (L_ "p_check_null_pointer")
                       , src = [0], dst = [], jump = ["p_check_null_pointer"]}
-      s1 = IMOV {assem = (S_ (LDR W AL) (RTEMP t) (Imm (RTEMP t) offset)), src = [t], dst = [t]}
-  return (i ++ [getpaddr, check, s1], t)
+      s1 = IMOV {assem = (S_ (LDR (if one then SB else W) AL) (RTEMP t) (Imm (RTEMP t) offset)), src = [t], dst = [t]}
+  return (i ++ [getpaddr, check, s1], t) -- cannot handle sb/w here as only return reg
 
 -------------------- Utilities ---------------------
 condIR = [IR.EQ, IR.LT, IR.LE, IR.GT, IR.GE, IR.NE]
