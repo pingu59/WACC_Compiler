@@ -62,8 +62,9 @@ translateFile :: String -> IO Stm
 translateFile file = do
   ast <- parseFile file
   ast' <- analyzeAST ast
-  let { stm = evalState (translate ast') newTranslateState }
-  return stm
+  let { (stm, s) = runState (translate ast') newTranslateState;
+        (Frame.PROC procFrag _) = head (procFrags s) }
+  return (SEQ stm (procFrag))
 
 translate :: ProgramF () -> State TranslateState Stm
 translate program = do
@@ -218,6 +219,43 @@ getVarEntry symbol = do
         f :: Int -> Level -> Int
         f offset level = offset + Frame.frameSize (levelFrame level)
 
+<<<<<<< HEAD
+=======
+-- adjust stack pointer on return of a function
+-- removing all the local variables on the stack
+adjustSP :: State TranslateState Stm
+adjustSP = do
+  state <- get
+  let offset = Frame.frameSize (levelFrame (head (levels state)))
+  if offset == 0
+  then return NOP
+  else return $ MOV (TEMP Frame.sp) (BINEXP PLUS (TEMP Frame.sp) (CONSTI offset))
+
+stripParam :: ParamF () -> (Type, String)
+stripParam (Ann (Param t (Ann (Ident s) _)) _) = (t,s)
+  
+translateFuncF :: FuncF () -> State TranslateState ()
+translateFuncF (Ann (Func t id ps stm) _) = do
+  let params = reverse $ map stripParam ps
+  level <- newLevel
+  pushLevel level
+  foldM addParam 0 params
+  addFunEntry symbol t
+  stm' <- translateStatListF stm >>= \s -> unNx s
+  adjustSP' <- adjustSP
+  let stm'' = SEQ (IR.PUSH (TEMP Frame.lr)) (SEQ stm' (SEQ adjustSP' (POP (TEMP Frame.pc))))
+  popLevel
+  frame <- getCurrFrame
+  addFragment (Frame.PROC (SEQ (LABEL ("f_" ++ symbol)) stm'') frame)
+  where Ann (Ident symbol) _ = id
+        
+        addParam :: Int -> (Type, String) -> State TranslateState Int
+        addParam offset (t, s) = do
+          frame <- getCurrFrame
+          addVarEntry s t (Access frame (Frame.InFrame offset))
+          return (offset + Frame.typeSize t)
+
+>>>>>>> origin/back_end_check_arm_rory
 translateProgramF :: ProgramF () -> State TranslateState Stm
 translateProgramF (Ann (Program fs stms) _) = do
   level <- newLevel

@@ -1,3 +1,16 @@
 begin
+<<<<<<< HEAD
   print 2
+=======
+  bool printLine(int n) is
+   int i = 0 ;
+    while i < n do
+      print "-" ;
+      i = i + 1
+    done ;
+ 
+   return true
+ end
+ int i = 0
+>>>>>>> origin/back_end_check_arm_rory
 end
