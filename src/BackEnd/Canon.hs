@@ -1,7 +1,7 @@
 module BackEnd.Canon where
 
 import Prelude hiding (EQ)
-import Control.Monad.State
+import Control.Monad.State.Lazy
 import Data.HashMap as HashMap hiding (map, filter)
 import FrontEnd.Parser
 import FrontEnd.SemanticAnalyzer
@@ -36,16 +36,6 @@ testBasicBlocksFile file = do
         stms = evalState (transform' stm) canonState }
   return stms
 
-
-testLinearizeFile :: String -> IO [Stm]
-testLinearizeFile file = do
-  ast <- parseFile file
-  ast' <- analyzeAST ast
-  let { (stm, s) = runState (Translate.translate ast') Translate.newTranslateState;
-        canonState = CanonState { tempAlloc = Translate.tempAlloc s,
-                                  controlLabelAlloc = Translate.controlLabelAlloc s};
-        stms = evalState (linearize stm) canonState }
-  return stms
 
 
 newCanonState :: CanonState
@@ -83,14 +73,14 @@ transform :: Stm -> State CanonState [Stm]
 transform stm = do
   stms <- linearize stm
   blocks <- basicBlocks stms
-  return $ traceSchedule $ fst blocks
+  return $ traceSchedule $ fst blocks 
 
 transform' :: Stm -> State CanonState [[Stm]]
 transform' stm = do
   stms <- linearize stm
   (stms', _) <- basicBlocks stms
   return stms'
-
+  
 newTemp :: State CanonState Temp.Temp
 newTemp = do
   state <- get
@@ -170,7 +160,7 @@ traceSchedule'' block@((LABEL label):rest) blockTable markTable
             LABEL _ -> []
             JUMP _ labels -> labels
             CJUMP _ _ _ label1 label2 -> [label2, label1]
-
+    
 
 -- test whether two statements commute or not
 commute :: Exp -> Stm -> Bool
@@ -186,34 +176,28 @@ isESEQ _ = False
 reorder :: [Exp] -> State CanonState (Stm, [Exp])
 reorder (exp@(CALL _ _):rest) = do
   temp <- newTemp
-  reorder $! ((ESEQ (MOV (TEMP temp) exp) (TEMP temp)):rest)
+  reorder ((ESEQ (MOV (TEMP temp) exp) (TEMP temp)):rest)
 reorder (exp:rest) = do
-  (stm', exps') <- doExp $! exp
-  (stm2', exps2') <- reorder $! rest
+  (stm', exps') <- doExp exp
+  (stm2', exps2') <- reorder rest
   if commute exps' stm2'
   then return (SEQ stm' stm2', (exps':exps2'))
   else newTemp >>= \temp ->
-       return (SEQ stm' (SEQ (MOV (TEMP temp) exps') stm2'),
+       return (cleanStm $ SEQ stm' (SEQ (MOV (TEMP temp) exps') stm2'),
                (TEMP temp):exps2')
 reorder [] = return (NOP, [])
 
 reorderStm :: [Exp] -> ([Exp] -> Stm) -> State CanonState Stm
 reorderStm exps build = do
-  (stm, exps') <- reorder $! exps
-  return $ SEQ stm (build $! exps')
+  (stm, exps') <- reorder exps
+  return $ cleanStm $ SEQ stm (build exps')
 
 reorderExp :: [Exp] -> ([Exp] -> Exp) -> State CanonState (Stm, Exp)
 reorderExp exps build = do
   (stm', exps') <- reorder exps
-  return (stm', build $! exps')
+  return (cleanStm $ stm', build exps')
 
 doStm :: Stm -> State CanonState Stm
-doStm (MOV (TEMP t) (CALL (NAME f) es))
-  = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
-
-doStm (MOV (TEMP t) (CALL e es))
-  = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
-
 doStm (MOV (TEMP t) b)
   = reorderStm [b] (\(b:_) -> MOV (TEMP t) b)
 
@@ -221,18 +205,6 @@ doStm stm@(MOV (MEM e@(BINEXP bop e1 e2)) b) = do
   if isOneLayer e1 && isOneLayer e2 && isOneLayer b
   then return stm
   else reorderStm [e, b] (\(e:b:_) -> MOV (MEM e) b)
-
-doStm (MOV (MEM e) b)
-  = reorderStm [e, b] (\(e:b_) -> MOV (MEM e) b)
-
-doStm (MOV (ESEQ s e) b)
-  = doStm (SEQ s (MOV e b))
-
-doStm (PUSH e)
-  = reorderStm [e] (\(e:_) -> PUSH e)
-
-doStm (POP e)
-  = reorderStm [e] (\(e:_) -> POP e)
 
 doStm (JUMP e labels)
   = reorderStm [e] (\(e:_) -> JUMP e labels)
@@ -243,43 +215,37 @@ doStm (CJUMP rop e1 e2 label1 label2)
 doStm (SEQ stm1 stm2) = do
   stm1' <- doStm stm1
   stm2' <- doStm stm2
-  return $ SEQ stm1' stm2'
+  return $ cleanStm $ SEQ stm1' stm2'
 
-doStm (EXP (CALL (NAME f) es))
-  = reorderStm es (\es -> EXP (CALL (NAME f) es))
+doStm stm = return $ cleanStm $ stm
 
-doStm (EXP (CALL e es))
-  = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
-doStm (EXP e)
-  = reorderStm [e] (\(e:_) -> EXP e)
-
-doStm stm = return stm
-
-isOneLayer :: Exp -> Bool
 isOneLayer (CONSTI _) = True
 isOneLayer (CONSTC _) = True
 isOneLayer (TEMP _) = True
 isOneLayer (MEM _) = True
 isOneLayer (NAME _) = True
-isOneLayer e = False
+isOneLayter _ = False
 
 
 doExp :: Exp -> State CanonState (Stm, Exp)
 doExp exp@(MEM e@(BINEXP bop e1 e2)) = do
-  if isOneLayer e1 && isOneLayer e2
-  then return (NOP, exp)
-  else reorderExp [e] (\(e:_) -> MEM e)
+--  if isOneLayer e1 && isOneLayer e2
+ return (NOP, exp)
+--  else reorderExp [e] (\(e:_) -> MEM e)
 
 doExp exp@(BINEXP bop e1 e2) = do
   if isOneLayer e1 && isOneLayer e2
   then return (NOP, exp)
-  else reorderExp [e1, e2] (\(e1:e2:_) -> BINEXP bop e1 e2)
+  else reorderExp [e1, e2] (\(e1:e2:_) -> BINEXP bop e1 e2) 
+ where isOneLayer (CONSTI _) = True
+       isOneLayer (CONSTC _) = True
+       isOneLayer (TEMP _) = True
+       isOneLayer (MEM _) = True
+       isOneLayer (NAME _) = True
+       isOneLayter _ = False
 
 doExp (MEM e)
   = reorderExp [e] (\(e:_) -> MEM e)
-
-doExp (CALL (NAME f) es)
-  = reorderExp es (\es -> CALL (NAME f) es)
 
 doExp (CALL e es)
   = reorderExp (e:es) (\(e:es) -> CALL e es)
@@ -287,7 +253,7 @@ doExp (CALL e es)
 doExp (ESEQ stm e) = do
   stm' <- doStm stm
   (stm'', e') <- doExp e
-  return (SEQ stm' stm'', e')
+  return (cleanStm $ SEQ stm' stm'', e')
 
 doExp e = reorderExp [] (\_ -> e)
 
@@ -314,14 +280,12 @@ testESEQ5 = BINEXP PLUS (MEM (CONSTI 23)) (ESEQ (MOV (TEMP 0) (TEMP 1)) (CONSTI 
 
 
 testLinear1 = SEQ (MOV t0 t1) (MOV t0 t2)
-testLinear2 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t0 t1) (CONSTI 1)))
+testLinear2 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t0 t1) (CONSTI 1))) 
 testLinear3 = SEQ (MOV t0 t1) (MOV t0 (ESEQ (MOV t2 (CONSTI 1)) t2))
 testLinear4 = SEQ (MOV t0 t1) (MOV t0 (BINEXP PLUS (ESEQ s1 (CONSTI 3)) (CONSTI 5)))
 testLinear5 = SEQ (MOV t0 t1) (MOV t0 testESEQ4)
 testLinear6 = SEQ (MOV t0 t1) (MOV t0 testESEQ5)
-testLinear7 = MOV t0 (CALL (NAME "function") [])
-testLinear8 = MOV t1 (CALL (NAME "function") [CONSTI 1, CONSTI 45])
-testLinear9 = MOV t0 (CALL (NAME "function") [MEM (TEMP 13)])
+
 
 testBasicBlocks1 = []
 testBasicBlocks2 = [LABEL label1,
