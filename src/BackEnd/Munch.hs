@@ -457,11 +457,11 @@ munchStm (IR.MOV (TEMP 11) (BINEXP bop (TEMP 11) (CONSTI offset))) = do
                   jump = [] } ]
 
 munchStm (IR.MOV e (CALL (NAME "#oneByte") [MEM me])) = do
-   ret <- suffixStm (IR.MOV e me)
+   ret <- suffixStm (IR.MOV e (MEM me))
    return $ ret AL SB
 
 munchStm (IR.MOV (CALL (NAME "#oneByte") [MEM me]) e) = do
-   ret <- suffixStm (IR.MOV me e)
+   ret <- suffixStm (IR.MOV (MEM me) e)
    return $ ret AL B_
 
 munchStm (SEQ s1 s2) = do
@@ -492,15 +492,6 @@ munchStm x = do
 
 -- ALLOW the suffix + cond of a load / store to change
 suffixStm :: Stm -> State TranslateState (Cond -> SLType -> [ASSEM.Instr])
-suffixStm (IR.MOV (MEM me) e) = do -- STR
-  (i, t) <- munchExp e
-  (l, ts, op) <- munchMem me
-  if null l then
-    return (\c -> (\suff -> i ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) op, src = ts, dst = [t]}]))
-  else
-    let s = head ts in
-    return (\c -> (\suff -> i ++ l ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) (Imm (RTEMP s) 0), src = [s], dst = [t]}]))
-
 suffixStm (IR.MOV e (MEM me)) = do -- LDR
   (i, t) <- munchExp e
   (l, ts, op) <- munchMem me
@@ -509,6 +500,15 @@ suffixStm (IR.MOV e (MEM me)) = do -- LDR
   else
     let s = head ts in
     return (\c -> (\suff -> i ++ l ++ [IMOV { assem = S_ (ARM.LDR suff c) (RTEMP t) (Imm (RTEMP s) 0), src = [s], dst = [t]}]))
+
+suffixStm (IR.MOV (MEM me) e) = do -- STR
+  (i, t) <- munchExp e
+  (l, ts, op) <- munchMem me
+  if null l then
+    return (\c -> (\suff -> i ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) op, src = ts, dst = [t]}]))
+  else
+    let s = head ts in
+    return (\c -> (\suff -> i ++ l ++ [IMOV { assem = S_ (ARM.STR suff c) (RTEMP t) (Imm (RTEMP s) 0), src = [s], dst = [t]}]))
 
 condStm :: Stm -> State TranslateState (Cond -> [ASSEM.Instr])  --allow for conditions to change
 condStm ir@(IR.MOV e (MEM me)) = do
