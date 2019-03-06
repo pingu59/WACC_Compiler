@@ -232,12 +232,6 @@ doStm stm@(MOV (MEM e s) b) = do
 doStm (MOV (ESEQ s e) b)
   = doStm (SEQ s (MOV e b))
 
-doStm (PUSH e)
-  = reorderStm [e] (\(e:_) -> PUSH e)
-
-doStm (POP e)
-  = reorderStm [e] (\(e:_) -> POP e)
-
 doStm (JUMP e labels)
   = reorderStm [e] (\(e:_) -> JUMP e labels)
 

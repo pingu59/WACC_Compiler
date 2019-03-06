@@ -550,18 +550,6 @@ condStm (IR.POPREGS regs) = do
                          src = [],
                          jump = [] }])
 
-
-
-condStm (IR.PUSH e) = do
-  (i, t) <- munchExp e
-  return (\c -> i ++ [IOPER {assem = STACK_ (ARM.PUSH c) [RTEMP t], dst = [sp],
-                             src = [t], jump = []}]) --sp here or not ??
-
-condStm (IR.POP e) = do
-  (i, t) <- munchExp e
-  return (\c -> i ++ [IOPER {assem = STACK_ (ARM.POP c) [RTEMP t], dst = [t, sp],
-                             src = [sp], jump = []}])
-
 condStm (JUMP e ls) = do
   case e of
     (CONSTI 1) ->
