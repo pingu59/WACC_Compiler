@@ -39,19 +39,22 @@ eseq = do
 
 twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a 
 twoExpr e1 e2 a = do
-    if (isBM e1) then do
+    return $ a e1 e2
+    e1' <- quadExp e1
+    e2' <- quadExp e2
+    if (isBM e1') then do
         eseq1 <- eseq
-        if (isBM e2) then do
+        if (isBM e2') then do
             eseq2 <- eseq
-            return (a (eseq1 e1) (eseq2 e2))
+            return $ a (eseq1 e1') (eseq2 e2')
         else
-            return (a (eseq1 e1) e2)
+            return $ a (eseq1 e1') e2'
     else do
-        if (isBM e2) then do
+        if (isBM e2') then do
             eseq2 <- eseq
-            return (a e1 (eseq2 e2))
+            return $ a e1' (eseq2 e2')
         else
-            return (a e1 e2)
+            return $ a e1' e2'
 
 quadStm :: Stm -> State TranslateState Stm
 quadStm (EXP e) = do 
@@ -77,17 +80,13 @@ quadStm (JUMP e ls) = do
         return $ JUMP e' ls
 
 quadStm (CJUMP rop e1 e2 t f) = do
-    e1' <- quadExp e1
-    e2' <- quadExp e2
-    twoExpr e1' e2' (\a -> \b -> (CJUMP rop a b t f))
+    twoExpr e1 e2 (\a -> \b -> (CJUMP rop a b t f))
 
 quadStm x = return x
 
 quadExp :: Exp -> State TranslateState Exp
 quadExp (BINEXP bop e1 e2) = do
-    e1' <- quadExp e1
-    e2' <- quadExp e2
-    twoExpr e1' e2' (\a -> \b -> (BINEXP bop a b))
+    twoExpr e1 e2 (\a -> \b -> (BINEXP bop a b))
 
 quadExp (MEM e i) = do
     e' <- quadExp e
