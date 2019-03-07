@@ -230,17 +230,17 @@ doStm (MOV (TEMP t) (CALL e es)) = undefined
 doStm (MOV (BINEXP bop e1 e2) b) = do
   if (isOneLayer e1) then
     if (isOneLayer e2) then
-      reorderStm [b] (\[b] -> (MOV b (BINEXP bop e1 e2)))
+      reorderStm [b] (\[b] -> (MOV (BINEXP bop e1 e2) b))
     else do
       (s2, e2') <- doExp e2
-      doStm (SEQ s2 (MOV b (BINEXP bop e1 e2')))
+      doStm (SEQ s2 (MOV (BINEXP bop e1 e2') b))
   else do
     (s1, e1') <- doExp e1
     if (isOneLayer e2 )then
-      doStm  (SEQ s1 (MOV b (BINEXP bop e1' e2)))
+      doStm  (SEQ s1 (MOV (BINEXP bop e1' e2) b))
     else do
       (s2, e2') <- doExp e2
-      doStm (SEQ s1 (SEQ s2 (MOV b (BINEXP bop e1' e2'))))
+      doStm (SEQ s1 (SEQ s2 (MOV (BINEXP bop e1' e2') b)))
 
 -- ASSUME b is simple
 doStm (MOV b (BINEXP bop e1 e2)) = do
