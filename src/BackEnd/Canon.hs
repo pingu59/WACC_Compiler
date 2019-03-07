@@ -24,7 +24,7 @@ import BackEnd.Frame as Frame
 -}
 
 
--- Main function for transforming IR tree 
+-- Main function for transforming IR tree
 transform :: Stm -> State TranslateState [Stm]
 transform stm = do
   stms <- linearize stm
@@ -58,7 +58,7 @@ flat' exp@(BINEXP bop e1 e2@(BINEXP bop2 e21 e22)) = do
   then return ([NOP], exp)
   else do
     ttotal <- newTemp
-    (stm2 , te2) <- flat' e2 
+    (stm2 , te2) <- flat' e2
     let ret = stm2 ++ [MOV (TEMP ttotal) (BINEXP bop e1 te2)]
     return ( ret, (TEMP ttotal))
 flat' x = return ([NOP], x)
@@ -207,7 +207,7 @@ doStm (JUMP (ESEQ s e) l) = doStm (SEQ s (JUMP e l))
 doStm (CJUMP rop (ESEQ s e1) e2 t f) = doStm (SEQ s (CJUMP rop e1 e2 t f))
 
 doStm (CJUMP rop e1 (ESEQ s e2) t f) = do
-  if(commute e1 s) then 
+  if(commute e1 s) then
     doStm (SEQ s (CJUMP rop e1 e2 t f))
   else do
     temp <- newTemp
@@ -269,6 +269,11 @@ doStm stm@(MOV (MEM (TEMP t) size) (ESEQ s e)) = do
   s' <- doStm s
   reorderStm [e] (\(e:_) -> SEQ s' (MOV (MEM (TEMP t) size) e))
 
+{-new-}
+doStm stm@(MOV (MEM e s) (ESEQ s1 e1)) = do
+  s1' <- doStm s1
+  reorderStm [e, e1] (\(e:e1_) -> SEQ s1' (MOV (MEM e s) e1))
+
 doStm stm@(MOV (MEM e s) b) = do
   reorderStm [e, b] (\(e:b_) -> MOV (MEM e s) b)
 
@@ -311,8 +316,8 @@ doExp (BINEXP bop (ESEQ s e1) e2) = doExp (ESEQ s (BINEXP bop e1 e2))
 doExp (MEM(ESEQ s e) i) = doExp (ESEQ s (MEM e i))
 
 doExp (BINEXP bop e1 (ESEQ s e2)) = do
-  if(commute e1 s) then 
-    doExp (ESEQ s (BINEXP bop e1 e2)) 
+  if(commute e1 s) then
+    doExp (ESEQ s (BINEXP bop e1 e2))
   else do
     t <- newTemp
     doExp (ESEQ (MOV (TEMP t) e1) (ESEQ s (BINEXP bop (TEMP t) e2)))
