@@ -201,6 +201,17 @@ reorderExp exps build = do
 
 
 doStm :: Stm -> State TranslateState Stm
+{- new -}
+doStm (JUMP (ESEQ s e) l) = doStm (SEQ s (JUMP e l))
+
+doStm (CJUMP rop (ESEQ s e1) e2 t f) = doStm (SEQ s (CJUMP rop e1 e2 t f))
+
+doStm (CJUMP rop e1 (ESEQ s e2) t f) = do
+  if(commute e1 s) then 
+    doStm (SEQ s (CJUMP rop e1 e2 t f))
+  else do
+    temp <- newTemp
+    doStm (SEQ (MOV (TEMP temp) e1) (CJUMP rop (TEMP temp) e2 t f))
 
 doStm p@(PUSHREGS _) = return p
 
@@ -214,6 +225,38 @@ doStm (MOV (MEM e s) (CALL (NAME f) es))
 
 doStm (MOV (TEMP t) (CALL e es)) = undefined
   -- = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
+
+{- New -}
+doStm (MOV (BINEXP bop e1 e2) b) = do
+  if (isOneLayer e1) then
+    if (isOneLayer e2) then
+      reorderStm [b] (\[b] -> (MOV b (BINEXP bop e1 e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s2 (MOV b (BINEXP bop e1 e2')))
+  else do
+    (s1, e1') <- doExp e1
+    if (isOneLayer e2 )then
+      doStm  (SEQ s1 (MOV b (BINEXP bop e1' e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s1 (SEQ s2 (MOV b (BINEXP bop e1' e2'))))
+
+-- ASSUME b is simple
+doStm (MOV b (BINEXP bop e1 e2)) = do
+  if (isOneLayer e1) then
+    if (isOneLayer e2) then
+      reorderStm [b] (\[b] -> (MOV b (BINEXP bop e1 e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s2 (MOV b (BINEXP bop e1 e2')))
+  else do
+    (s1, e1') <- doExp e1
+    if (isOneLayer e2 )then
+      doStm  (SEQ s1 (MOV b (BINEXP bop e1' e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s1 (SEQ s2 (MOV b (BINEXP bop e1' e2'))))
 
 doStm (MOV (TEMP t) b)
   = reorderStm [b] (\(b:_) -> MOV (TEMP t) b)
@@ -262,6 +305,18 @@ isOneLayer (NAME _) = True
 isOneLayer e = False
 
 doExp :: Exp -> State TranslateState (Stm, Exp)
+{- New -}
+doExp (BINEXP bop (ESEQ s e1) e2) = doExp (ESEQ s (BINEXP bop e1 e2))
+
+doExp (MEM(ESEQ s e) i) = doExp (ESEQ s (MEM e i))
+
+doExp (BINEXP bop e1 (ESEQ s e2)) = do
+  if(commute e1 s) then 
+    doExp (ESEQ s (BINEXP bop e1 e2)) 
+  else do
+    t <- newTemp
+    doExp (ESEQ (MOV (TEMP t) e1) (ESEQ s (BINEXP bop (TEMP t) e2)))
+
 doExp exp@(MEM e@(BINEXP bop e1 e2) s) = do
   if isOneLayer e1 && isOneLayer e2
   then return (NOP, exp)
@@ -287,7 +342,6 @@ doExp (ESEQ stm e) = do
   return (SEQ stm' stm'', e')
 
 doExp e = reorderExp [] (\_ -> e)
-
 
 -- Utility for Testing
 testCanonFile :: String -> IO [Stm]
