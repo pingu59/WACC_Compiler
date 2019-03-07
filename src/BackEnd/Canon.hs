@@ -191,7 +191,7 @@ reorder [] = return (NOP, [])
 
 reorderStm :: [Exp] -> ([Exp] -> Stm) -> State TranslateState Stm
 reorderStm exps build = do
-  (stm, exps') <- reorder  exps
+  (stm, exps') <- reorder exps
   return $ connect stm (build  exps')
 
 reorderExp :: [Exp] -> ([Exp] -> Exp) -> State TranslateState (Stm, Exp)

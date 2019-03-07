@@ -24,13 +24,11 @@ testQuadFile file = do
   ast' <- analyzeAST ast
   let (stm, s) = runState (translate ast') newTranslateState;
       userFrags = map (\(PROC stm _) -> stm) (procFrags s)
-      (stms, s') = runState (transform stm) s
-      (userFrags', qs) = runState (mapM transform qfrag) s'
-      (qstm, qs') = runState (mapM quadStm stms) qs
-      (qfrag, qs'') = runState (mapM quadStm $ concat userFrags') qs'
- --     cqstm = evalState (mapM transform (qstm ++ qfrag)) qs''
-  --return $ stms ++ concat userFrags'
-  return $ qstm ++ qfrag -- concat cqstm
+      (qstm, qs') = runState (quadStm stm) s
+      (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
+      (stms, s') = runState (transform qstm) qs''
+      (userFrags', _) = runState (mapM transform qfrag) s'
+  return $ stms ++ concat userFrags'
 
 eseq :: State TranslateState (Exp -> Exp)
 eseq = do 
@@ -39,7 +37,6 @@ eseq = do
 
 twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a 
 twoExpr e1 e2 a = do
-    return $ a e1 e2
     e1' <- quadExp e1
     e2' <- quadExp e2
     if (isBM e1') then do
