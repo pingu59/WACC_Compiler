@@ -8,8 +8,8 @@ import FrontEnd.Parser
 import FrontEnd.SemanticAnalyzer
 
 {-
-1. take translation from translate and change them to quadruples
-2. feed the quadruples into canon
+1. take translation from translate and change them to quadruples -- done!
+2. feed the quadruples into canon -- need to fix the canon
 3. take the canonical quadruples and perform analysis
 -}
 
