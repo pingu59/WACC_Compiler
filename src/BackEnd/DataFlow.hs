@@ -43,11 +43,7 @@ testReachGKFile file = do
         (gkuser) = evalState (mapM wrapReachGK userFrags') gkstate
     return $ genReachingDef (gkmain ++ concat gkuser)
 
-<<<<<<< HEAD
 testAGKFile file = do
-=======
-testQuadFile file = do
->>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
@@ -56,13 +52,9 @@ testQuadFile file = do
         (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
         (stms, s') = runState (transform qstm) qs''
         (userFrags', _) = runState (mapM transform qfrag) s'
-<<<<<<< HEAD
         (gkmain, gkstate) = runState (wrapAGK stms) newAState
         (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
     return $ genADef (gkmain ++ concat gkuser)
-=======
-    return $ stms ++ userFrags
->>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 eseq :: State TranslateState (Exp -> Exp)
 eseq = do
@@ -143,16 +135,10 @@ quadExp (ESEQ s e) = do
 
 quadExp x = return x
 
-<<<<<<< HEAD
 --- Reaching Definition --- 
 
 getTempDefts :: Int -> State ReachState [Int]
 getTempDefts k = do
-=======
---- Wrapping trees to gen/kill format ---
-getdefts :: Int -> State DataState [Int]
-getdefts k = do
->>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
     state <- get
     let map = tempMap state
         deftsT = HashMap.lookup k map
@@ -178,31 +164,16 @@ getReachKill m a gen = do
     deftsT <- getTempDefts a
     return $ m {kill = deftsT\\gen}
 
-<<<<<<< HEAD
 addOneReachDef :: Stm -> State ReachState ReachFlow
 addOneReachDef m@(MOV (TEMP a) b) = movReachGK m a
 addOneReachDef e = reachExp e
-=======
-addOneDef :: Stm -> State DataState DataFlow
-addOneDef m@(MOV (TEMP a) _) = movGK m a
-
-addOneDef e = newExp e
-
-wrapOneGk :: DataFlow -> State DataState DataFlow
-wrapOneGk m@(M (MOV (TEMP a) _) gen _ _) = getKill m a gen
->>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 wrapOneReachGk :: ReachFlow -> State ReachState ReachFlow 
 wrapOneReachGk m@(M (MOV (TEMP a) _) gen _ _) = getReachKill m a gen
 wrapOneReachGk x = return x
 
-<<<<<<< HEAD
 genReachPred :: [ReachFlow] -> PredTable
 genReachPred flow = genReachPred' flow flow [] 
-=======
-genPred :: [DataFlow] -> [(Int, [Int])]
-genPred flow = genPred' flow flow []
->>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 genReachPred' :: [ReachFlow] -> [ReachFlow] -> PredTable -> PredTable
 genReachPred' src [] acc = acc
