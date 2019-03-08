@@ -1,4 +1,4 @@
-module BackEnd.ReachFlow where
+module BackEnd.DataFlow where
 import BackEnd.Canon
 import BackEnd.Translate
 import BackEnd.IR
