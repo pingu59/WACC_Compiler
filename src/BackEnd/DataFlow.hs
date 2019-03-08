@@ -1,7 +1,7 @@
 module BackEnd.ReachFlow where
 import BackEnd.Canon
 import BackEnd.Translate
-import BackEnd.IR 
+import BackEnd.IR
 import Control.Monad.State.Lazy
 import BackEnd.Frame
 import FrontEnd.Parser
@@ -43,7 +43,11 @@ testReachGKFile file = do
         (gkuser) = evalState (mapM wrapReachGK userFrags') gkstate
     return $ genReachingDef (gkmain ++ concat gkuser)
 
+<<<<<<< HEAD
 testAGKFile file = do
+=======
+testQuadFile file = do
+>>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
@@ -52,16 +56,20 @@ testAGKFile file = do
         (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
         (stms, s') = runState (transform qstm) qs''
         (userFrags', _) = runState (mapM transform qfrag) s'
+<<<<<<< HEAD
         (gkmain, gkstate) = runState (wrapAGK stms) newAState
         (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
     return $ genADef (gkmain ++ concat gkuser)
+=======
+    return $ stms ++ userFrags
+>>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 eseq :: State TranslateState (Exp -> Exp)
-eseq = do 
+eseq = do
     t <- newTemp
     return $ \e -> (ESEQ (MOV (TEMP t) e) (TEMP t))
 
-twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a 
+twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a
 twoExpr e1 e2 a = do
     e1' <- quadExp e1
     e2' <- quadExp e2
@@ -80,21 +88,26 @@ twoExpr e1 e2 a = do
             return $ a e1' e2'
 
 quadStm :: Stm -> State TranslateState Stm
-quadStm (EXP e) = do 
+quadStm (EXP e) = do
     e' <- quadExp e
-    return $ EXP e' 
+    return $ EXP e'
 
-quadStm (SEQ s1 s2) = do 
+quadStm (SEQ s1 s2) = do
     s1' <- quadStm s1
     s2' <- quadStm s2
     return $ SEQ s1' s2'
 
+{-new-}
 quadStm (MOV e1 e2) = do
-    e1' <- quadExp e1
-    e2' <- quadExp e2
+  e1' <- quadExp e1
+  e2' <- quadExp e2
+  if(isBM e1' && isBM e2') then do
+    eseq' <- eseq
+    return $ MOV e1' (eseq' e2')
+  else
     return $ MOV e1' e2'
 
-quadStm (JUMP e ls) = do 
+quadStm (JUMP e ls) = do
     e' <- quadExp e
     if (isBM e) then do
         eseq' <- eseq
@@ -127,18 +140,24 @@ quadExp (ESEQ s e) = do
     s' <- quadStm s
     e' <- quadExp e
     return (ESEQ s' e')
-    
+
 quadExp x = return x
 
+<<<<<<< HEAD
 --- Reaching Definition --- 
 
 getTempDefts :: Int -> State ReachState [Int]
 getTempDefts k = do
+=======
+--- Wrapping trees to gen/kill format ---
+getdefts :: Int -> State DataState [Int]
+getdefts k = do
+>>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
     state <- get
     let map = tempMap state
         deftsT = HashMap.lookup k map
     case deftsT of
-        Just a -> return a 
+        Just a -> return a
         Nothing -> return []
 
 -- wrap gk data structure for both types of analysis
@@ -159,16 +178,31 @@ getReachKill m a gen = do
     deftsT <- getTempDefts a
     return $ m {kill = deftsT\\gen}
 
+<<<<<<< HEAD
 addOneReachDef :: Stm -> State ReachState ReachFlow
 addOneReachDef m@(MOV (TEMP a) b) = movReachGK m a
 addOneReachDef e = reachExp e
+=======
+addOneDef :: Stm -> State DataState DataFlow
+addOneDef m@(MOV (TEMP a) _) = movGK m a
+
+addOneDef e = newExp e
+
+wrapOneGk :: DataFlow -> State DataState DataFlow
+wrapOneGk m@(M (MOV (TEMP a) _) gen _ _) = getKill m a gen
+>>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 wrapOneReachGk :: ReachFlow -> State ReachState ReachFlow 
 wrapOneReachGk m@(M (MOV (TEMP a) _) gen _ _) = getReachKill m a gen
 wrapOneReachGk x = return x
 
+<<<<<<< HEAD
 genReachPred :: [ReachFlow] -> PredTable
 genReachPred flow = genReachPred' flow flow [] 
+=======
+genPred :: [DataFlow] -> [(Int, [Int])]
+genPred flow = genPred' flow flow []
+>>>>>>> d1479881991bc75eaaadedb1b2aaf6a409fe7a18
 
 genReachPred' :: [ReachFlow] -> [ReachFlow] -> PredTable -> PredTable
 genReachPred' src [] acc = acc
@@ -180,10 +214,10 @@ genReachPred' src ((E (LABEL l) deftid) : rest) acc = genReachPred' src rest (ac
         searchLable' [] _ acc = acc
         searchLable' ((E (JUMP _ lables) deftid) : rest) l acc
             | elem l lables = searchLable' rest l (deftid:acc)
-        searchLable' ((E (CJUMP _ _ _ t f) deftid) : rest) l acc 
+        searchLable' ((E (CJUMP _ _ _ t f) deftid) : rest) l acc
             | l == t || l == f = searchLable' rest l (deftid:acc)
         searchLable' (_:rest) l acc = searchLable' rest l acc
-        pred = if (deftid /= 0)&&(isNotjump (src!! (deftid - 1))) 
+        pred = if (deftid /= 0)&&(isNotjump (src!! (deftid - 1)))
                then (prevId deftid) else []
         isNotjump (E (JUMP _ _) _) = False
         isNotjump (E (CJUMP _ _ _ _ _) _) = False
@@ -207,17 +241,17 @@ initReachingDef flows = (map takeReachGK flows, map initReach flows)
 --                    gk table                     current reaching def         pred table                 output reaching def
 iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> ReachingDef
 iterateReachingDef gk this pred
-  | this == next = this 
+  | this == next = this
   | otherwise = iterateReachingDef gk next pred
   where
     next = iterateOnce this []
     iterateOnce :: ReachingDef -> ReachingDef ->  ReachingDef
     iterateOnce [] acc = acc
     iterateOnce ((deftid, (in_, out_)):remain) acc = iterateOnce remain (acc ++ [updated])
-        where 
+        where
             updated = (deftid, (newIn, newOut))
             predThis = fromJust ((Data.List.lookup) deftid pred)
-            predOut = map fromJust $ (filter (/= Nothing) (map (\x -> Data.List.lookup x this) predThis)) 
+            predOut = map fromJust $ (filter (/= Nothing) (map (\x -> Data.List.lookup x this) predThis))
             newIn = if predOut == [] then [] else foldl1 union (map snd predOut)
             (gen, kill) = fromJust $ (Data.List.lookup) deftid gk
             newOut = union  gen (in_ \\ kill)
@@ -228,9 +262,9 @@ genReachingDef flow = iterateReachingDef gk init pred
         (gk, init) = initReachingDef flow
         pred = genReachPred flow
 
-reachingDefSample = [MOV (TEMP 1) (CONSTI 5), MOV (TEMP 2) (CONSTI 1), LABEL "L1", 
+reachingDefSample = [MOV (TEMP 1) (CONSTI 5), MOV (TEMP 2) (CONSTI 1), LABEL "L1",
                      CJUMP BackEnd.IR.LT (TEMP 2) (TEMP 1) "L2" "LNEXT", LABEL "LNEXT",
-                     MOV (TEMP 2) (BINEXP PLUS (TEMP 2) (TEMP 2)), JUMP (NAME "L1") ["L1"], 
+                     MOV (TEMP 2) (BINEXP PLUS (TEMP 2) (TEMP 2)), JUMP (NAME "L1") ["L1"],
                      LABEL "L2", MOV (TEMP 1) (BINEXP MINUS (TEMP 2) (TEMP 1)), MOV (TEMP 2) (CONSTI 0)]
 
 testReachingDef stms = do
