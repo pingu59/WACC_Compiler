@@ -526,7 +526,7 @@ condStm ir@(IR.MOV e (MEM me _)) = do
 condStm ir@(IR.MOV (MEM me _) e) = do
   ret <- suffixStm ir
   return (\c -> ret c)
-
+  
 condStm (IR.MOV e (CONSTI int)) = do
   (i, t) <- munchExp e
   return (\c -> i ++ [IOPER { assem = MC_ (ARM.MOV c) (RTEMP t) (IMM int), src = [], dst = [t], jump = []}])
