@@ -56,6 +56,17 @@ testAGKFile file = do
         (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
     return $ genADef (gkmain ++ concat gkuser)
 
+testQuadfile file = do
+    ast <- parseFile file
+    ast' <- analyzeAST ast
+    let (stm, s) = runState (translate ast') newTranslateState;
+        userFrags = map (\(PROC stm _) -> stm) (procFrags s)
+        (qstm, qs') = runState (quadStm stm) s
+        (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
+        (stms, s') = runState (transform qstm) qs''
+        (userFrags', _) = runState (mapM transform qfrag) s'
+    return $ (stms ++ userFrags)
+
 eseq :: State TranslateState (Exp -> Exp)
 eseq = do
     t <- newTemp
@@ -200,7 +211,6 @@ genReachPred' src ((E _ deftid) : rest) acc = genReachPred' src rest (acc ++ [(d
 prevId 0 = []
 prevId x = [x - 1]
 
---              deftid  in          gkout                       init ReachingDef                   
 initReachingDef :: [ReachFlow] -> (ReachingGK , ReachingDef)
 initReachingDef flows = (map takeReachGK flows, map initReach flows) 
     where
@@ -209,7 +219,6 @@ initReachingDef flows = (map takeReachGK flows, map initReach flows)
         initReach (M _ _ _ deftid) = (deftid, ([], []))
         initReach (E tree deftid) = (deftid, ([], []))
 
---                    gk table                     current reaching def         pred table                 output reaching def
 iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> ReachingDef
 iterateReachingDef gk this pred
   | this == next = this
@@ -254,7 +263,6 @@ testReachGK stms = do
 
 --- Available Expression --- 
 
---                                          t       mem
 containsExpression :: Exp -> State AState [Exp]
 containsExpression target = do
     state <- get
@@ -350,9 +358,8 @@ genAPred' src ((A (LABEL l) _ _ deftid) : rest) acc = genAPred' src rest (acc ++
         isNotjump _ = True
 
 genAPred' src ((A _ _ _ deftid) : rest) acc = genAPred' src rest (acc ++ [(deftid, (prevId deftid))])
-
---              deftid  in          gkout                       init adef                   
-initADef :: [AFlow] -> ( AGK, ADef)
+                 
+initADef :: [AFlow] -> (AGK, ADef)
 initADef flows = (map takeAGK flows, map initA flows) 
     where
         takeAGK (A tree g k deftid) = (deftid, (g, k))

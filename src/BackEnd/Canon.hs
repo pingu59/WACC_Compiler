@@ -218,13 +218,16 @@ doStm p@(PUSHREGS _) = return p
 doStm p@(POPREGS _) = return p
 
 doStm (MOV (TEMP t) (CALL (NAME f) es))
-  = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+  | allSimple es = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+  | otherwise = do
+    (stm, es') <- reorderCall es 
+    doStm (SEQ stm (MOV (TEMP t) (CALL (NAME f) es')))
 
-doStm (MOV (MEM e s) (CALL (NAME f) es))
-  = reorderStm (e:es) (\(e:es) -> MOV (MEM e s) (CALL (NAME f) es))
+doStm (MOV m@(MEM e s) c@(CALL (NAME f) es)) = do
+  temp <- newTemp
+  doStm $ SEQ (MOV (TEMP temp) (c)) (MOV m (TEMP temp))
 
 doStm (MOV (TEMP t) (CALL e es)) = undefined
-  -- = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
 
 {- New -}
 doStm (MOV (BINEXP bop e1 e2) b) = do
@@ -292,14 +295,43 @@ doStm (SEQ stm1 stm2) = do
   return $ SEQ stm1' stm2'
 
 doStm (EXP (CALL (NAME f) es))
-  = reorderStm es (\es -> EXP (CALL (NAME f) es))
+  | allSimple es = reorderStm es (\es -> EXP (CALL (NAME f) es))
+  | otherwise = do
+    (stm, es') <- reorderCall es 
+    doStm (SEQ stm (EXP (CALL (NAME f) es')))
 
 doStm (EXP (CALL e es))
-  = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
+  | allSimple (e:es) = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
+  | otherwise = do
+    (stm, (e':es')) <- reorderCall (e:es) 
+    doStm (SEQ stm (EXP (CALL e' es')))
+
 doStm (EXP e)
   = reorderStm [e] (\(e:_) -> EXP e)
 
 doStm stm = return stm
+
+
+allSimple :: [Exp] -> Bool
+allSimple exps = filter (notSimple) exps == []
+
+notSimple (CONSTC _) = False
+notSimple (CONSTI _) = False
+notSimple (NAME _) = False
+notSimple (TEMP _) = False
+notSimple _ = True
+
+reorderCall :: [Exp] -> State TranslateState (Stm, [Exp]) 
+reorderCall exps = reorderCall' exps [] NOP
+
+reorderCall' :: [Exp] -> [Exp] -> Stm -> State TranslateState (Stm, [Exp]) 
+reorderCall' [] acc stm = return (stm, acc)
+reorderCall' (e:es) acc stm = do
+  if(notSimple e) then do
+    temp <- newTemp
+    reorderCall' es (acc ++ [TEMP temp]) (SEQ (MOV (TEMP temp) e) stm)
+  else
+    reorderCall' es (acc ++ [e]) stm
 
 isOneLayer :: Exp -> Bool
 isOneLayer (CONSTI _) = True
@@ -336,10 +368,18 @@ doExp (MEM e s)
   = reorderExp [e] (\(e:_) -> MEM e s)
 
 doExp (CALL (NAME f) es)
-  = reorderExp es (\es -> CALL (NAME f) es)
+  | allSimple es = reorderExp es (\es -> CALL (NAME f) es)
+  | otherwise = do
+    (stm, es') <- reorderCall es
+    (innerStm, innerExp) <- doExp (CALL (NAME f) es')
+    return (SEQ stm innerStm, innerExp)
 
 doExp (CALL e es)
-  = reorderExp (e:es) (\(e:es) -> CALL e es)
+  | allSimple es = reorderExp (e:es) (\(e:es) -> CALL e es)
+  | otherwise = do
+    (stm, (e': es')) <- reorderCall (e: es)
+    (innerStm, innerExp) <- doExp (CALL e' es')
+    return (SEQ stm innerStm, innerExp)
 
 doExp (ESEQ stm e) = do
   stm' <- doStm stm
