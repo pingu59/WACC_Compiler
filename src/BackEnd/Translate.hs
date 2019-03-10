@@ -463,12 +463,13 @@ translateBuiltInFuncAppF (Ann (FuncApp t id exprs) (pos, expT)) = do
   exps <- mapM translateExprF exprs
   exps' <- mapM unEx exps
   let { Ann (Ident symbol) _ = id }
+  --change: move add built in to munch
   case symbol of
-    "*" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp MUL exps' }
-    "/" -> do { addBuiltIn id_p_check_divide_by_zero ;return $ binexp DIV exps' }
-    "%" -> do { addBuiltIn id_p_check_divide_by_zero ;return $ binexp MOD exps' }
-    "+" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp PLUS exps' }
-    "-" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp MINUS exps' }
+    "*" -> do return $ binexp MUL exps'
+    "/" -> do return $ binexp DIV exps'
+    "%" -> do return $ binexp MOD exps'
+    "+" -> do return $ binexp PLUS exps'
+    "-" -> do return $ binexp MINUS exps'
     "&&" -> return $ binexp AND exps'
     "||" -> return $ binexp OR exps'
     ">" -> return $ condition GT exps'

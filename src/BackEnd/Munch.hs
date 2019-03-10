@@ -152,29 +152,45 @@ munchExp (CALL (NAME n) e)
 
 {- r0 / r1 : result in r0 -}
 munchExp (BINEXP DIV e1 e2) = do
-  (i1, t1) <- munchExp e1 -- dividend
-  (i2, t2) <- munchExp e2 --divisor
-  let divLabel = "__aeabi_idiv"
-      moveDividend = move_to_r t1 0
-      moveDivisor = move_to_r t2 1
-      check = IOPER {assem = BRANCH_ (BL AL) (L_ "p_check_divide_by_zero"),
-                    src = [0, 1], dst = [], jump = ["p_check_divide_by_zero"]}
-      divInstr = IOPER {assem = BRANCH_ (BL AL) (L_ divLabel),
-                      src = [0, 1], dst = [0], jump = [divLabel]} in
-      return $ (i1 ++ i2 ++ [moveDividend, moveDivisor, check, divInstr], 0)
+  case (constBop e1 e2 DIV) of
+    Just result -> do
+      t <- newTemp
+      let divide = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t]}
+      return $ ([divide], t)
+    Nothing -> do
+      addBuiltIn id_p_check_divide_by_zero
+      (i1, t1) <- munchExp e1 -- dividend
+      (i2, t2) <- munchExp e2 --divisor
+      let divLabel = "__aeabi_idiv"
+          moveDividend = move_to_r t1 0
+          moveDivisor = move_to_r t2 1
+          check = IOPER {assem = BRANCH_ (BL AL) (L_ "p_check_divide_by_zero"),
+                        src = [0, 1], dst = [], jump = ["p_check_divide_by_zero"]}
+          divInstr = IOPER {assem = BRANCH_ (BL AL) (L_ divLabel),
+                          src = [0, 1], dst = [0], jump = [divLabel]} in
+          return $ (i1 ++ i2 ++ [moveDividend, moveDivisor, check, divInstr], 0)
 
 {- r0 % r1 : result in r1 -}
 munchExp (BINEXP MOD e1 e2) = do
-  (i1, t1) <- munchExp e1 -- dividend
-  (i2, t2) <- munchExp e2  --divisor
-  let modLabel = "__aeabi_idivmod"
-      moveDividend = move_to_r t1 0
-      moveDivisor = move_to_r t2 1
-      check = IOPER {assem = BRANCH_ (BL AL) (L_ "p_check_divide_by_zero"),
-                    src = [0, 1], dst = [], jump = ["p_check_divide_by_zero"]}
-      modInstr = IOPER {assem = BRANCH_ (BL AL) (L_ modLabel),
-                  src = [0, 1], dst = [1], jump = [modLabel]} in
-      return $ (i1 ++ i2 ++ [moveDividend, moveDivisor, check ,modInstr], 1)
+  case (constBop e1 e2 MOD) of
+    Just result -> do
+      t <- newTemp
+      let modulus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t]}
+      return $ ([modulus], t)
+    Nothing -> do
+      addBuiltIn id_p_check_divide_by_zero
+      (i1, t1) <- munchExp e1 -- dividend
+      (i2, t2) <- munchExp e2  --divisor
+      let modLabel = "__aeabi_idivmod"
+          moveDividend = move_to_r t1 0
+          moveDivisor = move_to_r t2 1
+          check = IOPER {assem = BRANCH_ (BL AL) (L_ "p_check_divide_by_zero"),
+                        src = [0, 1], dst = [], jump = ["p_check_divide_by_zero"]}
+          modInstr = IOPER {assem = BRANCH_ (BL AL) (L_ modLabel),
+                      src = [0, 1], dst = [1], jump = [modLabel]} in
+          return $ (i1 ++ i2 ++ [moveDividend, moveDivisor, check ,modInstr], 1)
 
 {-If munched stm is of length 2 here then it must be a SEQ conaing a naive stm and a label -}
 munchExp (ESEQ (SEQ cjump@(CJUMP rop _ _ _ _) (SEQ false true)) e) = do
@@ -242,22 +258,39 @@ munchExp (CALL f es) = do
 munchExp (TEMP t) = return ([],t)
 
 munchExp (BINEXP MUL e1 e2) = do -- only the lower register is returned
-  (i1, t1) <- munchExp e1
-  (i2, t2) <- munchExp e2
-  tLo <- newTemp
-  tHi <- newTemp
-  let smull = IOPER {assem = C2_ (SMULL NoSuffix AL) (RTEMP tLo)
-                    (RTEMP tHi) (RTEMP t1) (RTEMP t2),
-                    src = [t1, t2], dst = [tLo, tHi], jump = []}
-      cmp = IOPER {assem = MC_ (CMP AL) (RTEMP tHi) (ASR_ (RTEMP tLo) 31),
-                   src = [tHi, tLo], dst = [], jump = []}
-      throw = IOPER {assem = BRANCH_ (BL ARM.NE) (L_ "p_throw_overflow_error"),
-                   src = [], dst = [], jump = ["p_throw_overflow_error"]}
-  return $ (i1 ++ i2 ++ [smull, cmp, throw], tLo)
+  case (constBop e1 e2 MUL) of
+    Just result -> do
+      t <- newTemp
+      let multiply = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t]}
+      return $ ([multiply], t)
+    Nothing -> do
+      addBuiltIn id_p_throw_overflow_error
+      (i1, t1) <- munchExp e1
+      (i2, t2) <- munchExp e2
+      tLo <- newTemp
+      tHi <- newTemp
+      let smull = IOPER {assem = C2_ (SMULL NoSuffix AL) (RTEMP tLo)
+                        (RTEMP tHi) (RTEMP t1) (RTEMP t2),
+                        src = [t1, t2], dst = [tLo, tHi], jump = []}
+          cmp = IOPER {assem = MC_ (CMP AL) (RTEMP tHi) (ASR_ (RTEMP tLo) 31),
+                       src = [tHi, tLo], dst = [], jump = []}
+          throw = IOPER {assem = BRANCH_ (BL ARM.NE) (L_ "p_throw_overflow_error"),
+                       src = [], dst = [], jump = ["p_throw_overflow_error"]}
+      return $ (i1 ++ i2 ++ [smull, cmp, throw], tLo)
 
 munchExp x = do
   c <- condExp x
   return $ c AL
+
+constBop :: Exp -> Exp -> BOp -> Maybe OP
+constBop (CONSTI i1)  (CONSTI i2) op
+  | op == MUL = Just (IMM (i1 * i2))
+  | op == DIV = Just (IMM (i1 `div` i2))
+  | op == MOD = Just (IMM (i1 `mod` i2))
+  | op == PLUS = Just (IMM (i1 + i2))
+  | op == MINUS = Just (IMM (i1 - i2))
+constBop _ _ _ = Nothing
 
 lslOP :: Exp -> Exp -> BOp -> Int -> State TranslateState (Cond -> ([ASSEM.Instr], Temp))
 lslOP e1 e2 bop int = do
@@ -269,6 +302,7 @@ lslOP e1 e2 bop int = do
 canlsl bop int = (bop == MINUS || bop == PLUS) && (int == 2 || int == 4 || int == 8)
 
 plusMinus destination source op srcreg srcinstr = do
+  addBuiltIn id_p_throw_overflow_error
   (i1, t1) <- munchExp destination
   let calc = IOPER {assem = CBS_ (op S AL) (RTEMP t1) (RTEMP t1) source,
                     src = ([t1] ++ srcreg), dst = [t1], jump = []}
@@ -305,12 +339,26 @@ condExp (BINEXP bop e1@(CONSTI int1) e2@(CONSTI int2))
       otherwise -> return $ \c -> (i1 ++ [calc c], t1)
 
 condExp (BINEXP PLUS e1 e2) = do
-  (i2, t2) <- munchExp e2
-  plusMinus e1 (R (RTEMP t2)) ADD [t2] i2
+  case (constBop e1 e2 PLUS) of
+    Just result -> do
+      t <- newTemp
+      let plus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t]}
+      return $ \c -> ([plus], t)
+    Nothing -> do
+      (i2, t2) <- munchExp e2
+      plusMinus e1 (R (RTEMP t2)) ADD [t2] i2
 
 condExp (BINEXP MINUS e1 e2) = do
-  (i2, t2) <- munchExp e2
-  plusMinus e1 (R (RTEMP t2)) SUB [t2] i2
+  case (constBop e1 e2 MINUS) of
+    Just result -> do
+      t <- newTemp
+      let minus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t]}
+      return $ \c -> ([minus], t)
+    Nothing -> do
+      (i2, t2) <- munchExp e2
+      plusMinus e1 (R (RTEMP t2)) SUB [t2] i2
 
 condExp (BINEXP bop (CONSTI int) e) = condExp (BINEXP bop e (CONSTI int))
 
@@ -526,7 +574,7 @@ condStm ir@(IR.MOV e (MEM me _)) = do
 condStm ir@(IR.MOV (MEM me _) e) = do
   ret <- suffixStm ir
   return (\c -> ret c)
-  
+
 condStm (IR.MOV e (CONSTI int)) = do
   (i, t) <- munchExp e
   return (\c -> i ++ [IOPER { assem = MC_ (ARM.MOV c) (RTEMP t) (IMM int), src = [], dst = [t], jump = []}])
@@ -636,7 +684,59 @@ deSeq (SEQ s1 s2) = (s1, s2)
 optimizeInstrs :: [ASSEM.Instr] -> [ASSEM.Instr]
 optimizeInstrs instrs = filter (\x -> not $ containsDummy x) instrs'
   where instrs' = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] instrs)
+------------------
 
+munch file = do
+  putStrLn ""
+  ast <- parseFile file
+  ast' <- analyzeAST ast
+  let (stm, s) = runState (Translate.translate ast') Translate.newTranslateState
+      (builtInFrags, s') = runState (genProcFrags (Set.toList $ builtInSet s)) s -- generate builtIn
+      userFrags = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags s)
+      dataFrags = map munchDataFrag ( Translate.dataFrags s' )
+      (stm', s'') = runState (transform stm) s'
+      (userFrags', s''') = runState (mapM (\f -> transform f >>= \f' -> munchmany f') userFrags) s'' -- munch functions
+      arms = evalState (munchmany stm') s'''
+      substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] arms)
+      out = filter (\x -> not $ containsDummy x) substitute
+      substitute' = concat $ map (\u -> optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] u)) userFrags'
+      out' = filter (\x -> not $ containsDummy x) substitute'
+      totalOut = intercalate ["\n"] (map (map show) builtInFrags) ++ ["\n"] ++
+                 concat (map (lines . show) (concat dataFrags)) ++ ["\n"] ++
+                 (map show (out' ++ out))
+  mapM_ (\(id, s) -> putStrLn (show id ++ " " ++ s)) (zip [1..] totalOut)
+  return ()
+
+  where genProcFrags :: [Int] -> State TranslateState [[ASSEM.Instr]]
+        genProcFrags ids = do
+          let gens = map (\n -> genBuiltIns !! n) ids
+          pfrags <- foldM (\acc f -> f >>= \pfrag -> return $ acc ++ [pfrag]) [] gens
+          return pfrags
+
+testMunch file = do
+  ast <- parseFile file
+  ast' <- analyzeAST ast
+  let (stm, s) = runState (Translate.translate ast') Translate.newTranslateState
+      (builtInFrags, s') = runState (genProcFrags (Set.toList $ builtInSet s)) s -- generate builtIn
+      userFrags = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags s)
+      dataFrags = map munchDataFrag ( Translate.dataFrags s' )
+      (stm', s'') = runState (transform stm) s'
+      (userFrags_ , s''') = runState (mapM transform userFrags) s''
+      (userFrags', s'''') = runState (mapM munchmany userFrags_) s''' -- munch functions
+      arms = evalState (munchmany stm') s''''
+      substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] arms)
+      out = filter (\x -> not $ containsDummy x) substitute
+      substitute' = map (\f -> optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] f)) userFrags'
+      out' = map (filter (\x -> not $ containsDummy x)) substitute'
+  return $ (out' ++ [out], dataFrags, builtInFrags)
+
+  where genProcFrags :: [Int] -> State TranslateState [[ASSEM.Instr]]
+        genProcFrags ids = do
+          let gens = map (\n -> genBuiltIns !! n) ids
+          pfrags <- foldM (\acc f -> f >>= \pfrag -> return $ acc ++ [pfrag]) [] gens
+          return pfrags
+
+------------------
 
 munchmany [] = return []
 munchmany (x:xs) = do
