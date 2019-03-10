@@ -213,7 +213,7 @@ addFragment frag = do
 getVarEntry :: String -> State TranslateState Exp
 getVarEntry symbol = do
   state <- get
-  result <-(find' (levels state) [])
+  result <- (find' (levels state) [])
   case result of
     ((VarEntry (Access frame access) t), prevLevels) ->
       case access of
@@ -221,7 +221,8 @@ getVarEntry symbol = do
         Frame.InFrame offset -> do
           let   prevSize = sum (map levelSize prevLevels)
                 targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
-          return $ CALL (NAME "#memaccess") [(CONSTI $  (prevSize + targetOffset))]
+                spTotal = sum (map levelSize (levels state))
+          return $ CALL (NAME "#memaccess") [CONSTI $  (prevSize + targetOffset), CONSTI spTotal]
     otherwise -> fail ""
 
   where find' :: [Level] -> [Level] -> State TranslateState (EnvEntry, [Level])

@@ -30,7 +30,7 @@ justret e = do
 munchExp :: Exp -> State TranslateState ([ASSEM.Instr], Temp)
 munchExp (CALL (NAME "#retVal") [e]) = justret e
 
-munchExp (CALL (NAME "#memaccess") [CONSTI i]) = do
+munchExp (CALL (NAME "#memaccess") [CONSTI i, _]) = do
   t <- newTemp
   return ([IOPER {assem = CBS_ (ADD NoSuffix AL) (RTEMP t) SP (IMM i),
                  src = [13], dst = [t], jump = []}], t)

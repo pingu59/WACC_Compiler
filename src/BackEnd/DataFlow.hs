@@ -19,13 +19,6 @@ import BackEnd.Temp as Temp
 4. transform
 -}
 
-type PredTable = [(Int, [Int])]
-type ReachingGK = [(Int, ([Int], [Int]))]
-type ReachingDef = [(Int, ([Int], [Int]))]
-type AGK = [(Int, ([Exp], [Exp]))]
-type ADef = [(Int, ([Exp], [Exp]))]
-type ReachingExpr = [(Int, [Exp])]
-
 isBM :: Exp -> Bool
 isBM (MEM _ _) = True
 isBM (BINEXP _ _ _) = True
@@ -67,6 +60,31 @@ testQuadfile file = do
         (stms, s') = runState (transform qstm) qs''
         (userFrags', _) = runState (mapM transform qfrag) s'
     return $ (stms ++ userFrags)
+
+testReachingExprFile file = do
+    ast <- parseFile file
+    ast' <- analyzeAST ast
+    let (stm, s) = runState (translate ast') newTranslateState;
+        userFrags = map (\(PROC stm _) -> stm) (procFrags s)
+        (qstm, qs') = runState (quadStm stm) s
+        (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
+        (stms, s') = runState (transform qstm) qs''
+        (userFrags', _) = runState (mapM transform qfrag) s'
+        (gkmain, gkstate) = runState (wrapAGK stms) newAState
+        (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
+        (adef, _) = genADef (gkmain ++ concat gkuser)
+        rExpr = genReachingExpression adef
+    return $ rExpr
+
+testCSEFile file = do -- only with main
+    ast <- parseFile file
+    ast' <- analyzeAST ast
+    let (stm, s) = runState (translate ast') newTranslateState;
+        (qstm, qs') = runState (quadStm stm) s
+        (stms, s') = runState (transform qstm) qs'
+        (cseout, cseState) = runState (cse stms s') newAState 
+        transState = trans cseState -- get the translate state out
+    return cseout
 
 -- constProp :: ([Stm],ReachingDef) -> ([Stm],ReachingDef)
 -- {-if n(move const to temp) reches f with no def of n in between-}
@@ -262,25 +280,25 @@ genReachPred flow = genReachPred' flow flow []
 
 genReachPred' :: [ReachFlow] -> [ReachFlow] -> PredTable -> PredTable
 genReachPred' src [] acc = acc
-genReachPred' src ((E (LABEL l) deftid) : rest) acc = genReachPred' src rest (acc ++ [(deftid, (searchLable l))])
+genReachPred' src ((E (LABEL l) defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (searchLable l))])
     where
         searchLable :: String -> [Int]
         searchLable l = (searchLable' src l []) ++ pred
         searchLable' :: [ReachFlow] -> String -> [Int] -> [Int]
         searchLable' [] _ acc = acc
-        searchLable' ((E (JUMP _ lables) deftid) : rest) l acc
-            | elem l lables = searchLable' rest l (deftid:acc)
-        searchLable' ((E (CJUMP _ _ _ t f) deftid) : rest) l acc
-            | l == t || l == f = searchLable' rest l (deftid:acc)
+        searchLable' ((E (JUMP _ lables) defid) : rest) l acc
+            | elem l lables = searchLable' rest l (defid:acc)
+        searchLable' ((E (CJUMP _ _ _ t f) defid) : rest) l acc
+            | l == t || l == f = searchLable' rest l (defid:acc)
         searchLable' (_:rest) l acc = searchLable' rest l acc
-        pred = if (deftid /= 0)&&(isNotjump (src!! (deftid - 1)))
-               then (prevId deftid) else []
+        pred = if (defid /= 0)&&(isNotjump (src!! (defid - 1)))
+               then (prevId defid) else []
         isNotjump (E (JUMP _ _) _) = False
         isNotjump (E (CJUMP _ _ _ _ _) _) = False
         isNotjump _ = True
 
-genReachPred' src ((M _ _ _ deftid) : rest) acc = genReachPred' src rest (acc ++ [(deftid, (prevId deftid))])
-genReachPred' src ((E _ deftid) : rest) acc = genReachPred' src rest (acc ++ [(deftid, (prevId deftid))])
+genReachPred' src ((M _ _ _ defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
+genReachPred' src ((E _ defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
 
 prevId 0 = []
 prevId x = [x - 1]
@@ -288,10 +306,10 @@ prevId x = [x - 1]
 initReachingDef :: [ReachFlow] -> (ReachingGK , ReachingDef)
 initReachingDef flows = (map takeReachGK flows, map initReach flows)
     where
-        takeReachGK (M tree g k deftid) = (deftid, (g, k))
-        takeReachGK (E tree deftid) = (deftid, ([], []))
-        initReach (M _ _ _ deftid) = (deftid, ([], []))
-        initReach (E tree deftid) = (deftid, ([], []))
+        takeReachGK (M tree g k defid) = (defid, (g, k))
+        takeReachGK (E tree defid) = (defid, ([], []))
+        initReach (M _ _ _ defid) = (defid, ([], []))
+        initReach (E tree defid) = (defid, ([], []))
 
 iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> ReachingDef
 iterateReachingDef gk this pred
@@ -301,13 +319,13 @@ iterateReachingDef gk this pred
     next = iterateOnce this []
     iterateOnce :: ReachingDef -> ReachingDef ->  ReachingDef
     iterateOnce [] acc = acc
-    iterateOnce ((deftid, (in_, out_)):remain) acc = iterateOnce remain (acc ++ [updated])
+    iterateOnce ((defid, (in_, out_)):remain) acc = iterateOnce remain (acc ++ [updated])
         where
-            updated = (deftid, (newIn, newOut))
-            predThis = fromJust ((Data.List.lookup) deftid pred)
+            updated = (defid, (newIn, newOut))
+            predThis = fromJust ((Data.List.lookup) defid pred)
             predOut = map fromJust $ (filter (/= Nothing) (map (\x -> Data.List.lookup x this) predThis))
             newIn = if predOut == [] then [] else foldl1 union (map snd predOut)
-            (gen, kill) = fromJust $ (Data.List.lookup) deftid gk
+            (gen, kill) = fromJust $ (Data.List.lookup) defid gk
             newOut = union  gen (in_ \\ kill)
 
 genReachingDef :: [ReachFlow] -> ReachingDef
@@ -339,32 +357,32 @@ testReachGK stms = do
 
 containsExpression :: Exp -> State AState [Exp]
 containsExpression target = do
-    state <- get
-    return $ nub $ concatMap (contains target) (dummyFlow state)
+    state <- get 
+    return $ nub $ concatMap (contains target) (wrappedFlow state)
 
 containsMem :: [AFlow] -> [Exp]
 containsMem flows = concatMap containsOneMem flows
 
 containsOneMem :: AFlow -> [Exp]
-containsOneMem (A (MOV a e@(MEM b _)) _ _ deftid) = [e]
-containsOneMem (A (MOV e@(MEM a _) b) _ _ deftid) = [e]
+containsOneMem (A (MOV a e@(MEM b _)) _ _ _ _) = [e]
+containsOneMem (A (MOV e@(MEM a _) b) _ _ _ _) = [e]
 containsOneMem _ = []
 
 contains :: Exp -> AFlow -> [Exp]
 --s1
-contains target (A (MOV a expr@(BINEXP _ b c )) _ _ deftid)
+contains target (A (MOV a expr@(BINEXP _ b c )) _ _ _ _)
     | b == target || c == target = [expr]
 --s5
-contains target (A (MOV a expr@(MEM b _)) _ _ deftid)
+contains target (A (MOV a expr@(MEM b _)) _ _ _ _)
     | b == target = [expr]
 --s9
-contains target (A (MOV a expr@(CALL e es)) _ _ deftid)
+contains target (A (MOV a expr@(CALL e es)) _ _ _ _)
     | elem target (e:es) = [expr]
 --s8
-contains target (A (EXP expr@(CALL e es)) _ _ deftid)
+contains target (A (EXP expr@(CALL e es)) _ _ _ _)
     | elem target (e:es) = [expr]
 --s6
-contains target (A (MOV expr@(MEM a _) b) _ _ deftid)
+contains target (A (MOV expr@(MEM a _) b) _ _ _ _)
     | a == target = [expr]
 
 --s3
@@ -374,8 +392,11 @@ wrapAGK :: [Stm] -> State AState [AFlow]
 wrapAGK stms = do
     flows <- mapM addOneAGK stms
     state <- get
-    put $ state {memFlow = containsMem flows, dummyFlow = flows}
+    put $ state {memFlow = containsMem flows, wrappedFlow = flows}
     flows' <- mapM wrapOneAGK flows
+    state' <- get
+    put $ state' {wrappedFlow = flows'}
+
     return flows'
 
 -- wrap stm with AFlow but WITHOUT gen/kill
@@ -394,16 +415,16 @@ addExpr exprs = do
 
 -- Add Gen Kills
 wrapOneAGK :: AFlow -> State AState AFlow
-wrapOneAGK a@(A (EXP e@(CALL _ _)) _ _ _) = addExpr [e] >> killMem a
+wrapOneAGK a@(A (EXP e@(CALL _ _)) _ _ _ _) = addExpr [e] >> killMem a
 
-wrapOneAGK a@(A (MOV (MEM _ _) _ ) _ _ _) = killMem a
+wrapOneAGK a@(A (MOV (MEM _ _) _ ) _ _ _ _) = killMem a
 --Pre : t is a temp
-wrapOneAGK a@(A (MOV t (CALL _ _)) _ _ _) = do
+wrapOneAGK a@(A (MOV t (CALL _ _)) _ _ _ _) = do
     state <- get
     cexpr <- containsExpression t
     return $ a {kill_ = union (memFlow state) cexpr}
 
-wrapOneAGK a@(A (MOV t b) _ _ _) = do
+wrapOneAGK a@(A (MOV t b) _ _ _ _) = do
     cexpr <- containsExpression t
     return $ a {kill_ = cexpr, gen_ = ([b]\\cexpr)}
 
@@ -414,30 +435,30 @@ genAPred flow = genAPred' flow flow []
 
 genAPred' :: [AFlow] -> [AFlow] -> PredTable -> PredTable
 genAPred' src [] acc = acc
-genAPred' src ((A (LABEL l) _ _ deftid) : rest) acc = genAPred' src rest (acc ++ [(deftid, (searchLable l))])
+genAPred' src ((A (LABEL l) _ _ defid _) : rest) acc = genAPred' src rest (acc ++ [(defid, (searchLable l))])
     where
         searchLable :: String -> [Int]
         searchLable l = (searchLable' src l []) ++ pred
         searchLable' :: [AFlow] -> String -> [Int] -> [Int]
         searchLable' [] _ acc = acc
-        searchLable' ((A (JUMP _ lables) _ _ deftid) : rest) l acc
-            | elem l lables = searchLable' rest l (deftid:acc)
-        searchLable' ((A (CJUMP _ _ _ t f) _ _ deftid) : rest) l acc
-            | l == t || l == f = searchLable' rest l (deftid:acc)
+        searchLable' ((A (JUMP _ lables) _ _ defid _) : rest) l acc
+            | elem l lables = searchLable' rest l (defid:acc)
+        searchLable' ((A (CJUMP _ _ _ t f) _ _ defid _) : rest) l acc
+            | l == t || l == f = searchLable' rest l (defid:acc)
         searchLable' (_:rest) l acc = searchLable' rest l acc
-        pred = if (deftid /= 0)&&(isNotjump (src!! (deftid - 1)))
-               then (prevId deftid) else []
-        isNotjump (A (JUMP _ _) _ _ _) = False
-        isNotjump (A (CJUMP _ _ _ _ _) _ _ _) = False
+        pred = if (defid /= 0)&&(isNotjump (src!! (defid - 1)))
+               then (prevId defid) else []
+        isNotjump (A (JUMP _ _) _ _ _ _) = False
+        isNotjump (A (CJUMP _ _ _ _ _) _ _ _ _) = False
         isNotjump _ = True
 
-genAPred' src ((A _ _ _ deftid) : rest) acc = genAPred' src rest (acc ++ [(deftid, (prevId deftid))])
+genAPred' src ((A _ _ _ defid _) : rest) acc = genAPred' src rest (acc ++ [(defid, (prevId defid))])
 
 initADef :: [AFlow] -> (AGK, ADef)
 initADef flows = (map takeAGK flows, map initA flows)
     where
-        takeAGK (A tree g k deftid) = (deftid, (g, k))
-        initA (A _ _ _ deftid) = (deftid, ([], []))
+        takeAGK (A tree g k defid _) = (defid, (g, k))
+        initA (A _ _ _ defid _) = (defid, ([], []))
 
 iterateADef :: AGK -> ADef -> PredTable -> ADef
 iterateADef gk this pred
@@ -447,17 +468,17 @@ iterateADef gk this pred
     next = iterateOnce this []
     iterateOnce :: ADef -> ADef -> ADef
     iterateOnce [] acc = acc
-    iterateOnce ((deftid, (in_, out_)):remain) acc = iterateOnce remain (acc ++ [updated])
+    iterateOnce ((defid, (in_, out_)):remain) acc = iterateOnce remain (acc ++ [updated])
         where
-            updated = (deftid, (newIn, newOut))
-            predThis = fromJust ((Data.List.lookup) deftid pred)
+            updated = (defid, (newIn, newOut))
+            predThis = fromJust ((Data.List.lookup) defid pred)
             predOut = map fromJust $ (filter (/= Nothing) (map (\x -> Data.List.lookup x this) predThis))
             newIn = if predOut == [] then [] else foldl1 intersect (map snd predOut)
-            (gen, kill) = fromJust $ (Data.List.lookup) deftid gk
+            (gen, kill) = fromJust $ (Data.List.lookup) defid gk
             newOut = union gen (in_ \\ kill)
 
-genADef :: [AFlow] -> ADef
-genADef flow = iterateADef gk init pred
+genADef :: [AFlow] -> (ADef, PredTable)
+genADef flow = (iterateADef gk init pred, pred)
     where
         (gk, init) = initADef flow
         pred = genAPred flow
@@ -466,11 +487,99 @@ genReachingExpression :: ADef -> ReachingExpr
 genReachingExpression adef = map reachingOneExpression adef
 
 reachingOneExpression :: (Int, ([Exp], [Exp])) -> (Int, [Exp])
-reachingOneExpression (deftid, (in_, out_))
-    = (deftid, subset)
+reachingOneExpression (defid, (in_, out_))
+    = (defid, subset)
     where
         subset = nub $ concatMap (genOneReachable) (intersect in_ out_)
         genOneReachable :: Exp -> [Exp]
-        genOneReachable a@(BINEXP _ b c) = [a, b, c]
-        genOneReachable a@(MEM b _) = [b]
+        genOneReachable a@(BINEXP _ _ _) = [a]
+        -- genOneReachable a@(BINEXP _ b c) = [a, b, c]
+        genOneReachable a@(MEM b _) = [a]
+        -- genOneReachable a@(MEM b _) = [b]
         genOneReachable _ = fail "EXPRESSION CONTAINS NOT ALLOWED GENS"
+
+-- COMMON-SUBEXPRESSION ELIMINATION
+-- NEED TO CARRY TRANSLATE STATE REGISTER INFORMATION 
+-- REWRITE the translate state information after use ***
+-- pre: apply this on each frag **separately**
+cse :: [Stm] -> TranslateState -> State AState [Stm]
+cse stms transtate = do
+    let (gk, gkstate) = runState (wrapAGK stms) newAState
+        (adef, pt_) = genADef gk
+        rExpr = genReachingExpression adef
+    put $ gkstate {re = rExpr, trans = transtate, pt = pt_} -- put everything in the state
+    cseAll
+    state <- get
+    return $ unA $ wrappedFlow state
+
+cseAll :: State AState [()]
+cseAll = do
+    state <- get
+    mapM (addreTree) (wrappedFlow state)
+    mapM cseOne [0..(length (wrappedFlow state) - 1)]
+
+addreTree :: AFlow -> State AState ()
+addreTree flow = do
+    -- add the tree_ to reTree_, put it back to the state and return
+    updateAFlow $ flow {reTree_ = [tree_ flow]}
+
+cseOne :: Int -> State AState ()
+cseOne targetNum = do 
+    state <- get 
+    let flows = wrappedFlow state
+        target = flows !! targetNum
+        rhs = getRHS (tree_ target)
+        reachingExpr = fromJust $ Data.List.lookup targetNum (re state) -- PRE: THE TABLE IS COMPLETE
+    if (rhs == Nothing || (not $ elem (fromJust rhs) reachingExpr)) then do -- Not a move or Not reachable
+        return ()
+    else do
+        -- find the previously defined exp
+        let exprToChange = fromJust rhs
+            translateState = trans state
+            (temp, translateState') = runState (Translate.newTemp) translateState 
+        exprSources <- findExpr exprToChange targetNum
+        mapM (transformSourceExpr temp) exprSources
+        transformDstExpr temp target
+        return ()
+
+--                     Temp 
+transformDstExpr :: Int -> AFlow -> State AState ()
+transformDstExpr temp (A tree gen kill defid ((MOV a b):res)) = do
+    let newDst = (A tree gen kill defid ((MOV a (TEMP temp)):res))
+    updateAFlow newDst
+
+transformSourceExpr :: Int -> AFlow -> State AState ()
+transformSourceExpr temp (A tree gen kill defid ((MOV a b):res)) = do
+    let newSource = (A tree gen kill defid ((MOV (TEMP temp) b):(MOV a (TEMP temp)):res))
+    updateAFlow newSource
+
+updateAFlow :: AFlow -> State AState ()
+updateAFlow flow = do        
+    state <- get
+    let flows = wrappedFlow state
+        defid = defid_ flow
+        (prev, aft) = splitAt defid flows
+    put $ state {wrappedFlow = prev ++ [flow] ++ (drop 1 aft)}
+    return ()
+
+-- recursively find the previous instruction until expression not reachable i.e is created
+findExpr :: Exp -> Int -> State AState [AFlow]
+findExpr expr cur = do
+    state <- get
+    let reTable = re state
+    if (not $ elem expr (fromJust $ Data.List.lookup cur reTable)) then
+        return [(wrappedFlow state) !! cur]
+    else do
+        let allpred = fromJust $ Data.List.lookup cur (pt state)
+        allSource <- mapM (findExpr expr) allpred
+        if allSource == [] then 
+            fail "SHOULD HAVE AT LEAST ONE SOURCE"
+        else
+            return $ concat allSource
+
+getRHS :: Stm -> Maybe Exp
+getRHS (MOV _ b@(BINEXP _ _ _)) = Just b
+getRHS _ = Nothing
+        
+unA :: [AFlow] -> [Stm]
+unA flows = concatMap reTree_ flows
