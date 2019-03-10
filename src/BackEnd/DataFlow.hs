@@ -1,7 +1,7 @@
 module BackEnd.DataFlow where
 import BackEnd.Canon
-import BackEnd.Translate
-import BackEnd.IR
+import BackEnd.Translate as Translate
+import BackEnd.IR as IR
 import Control.Monad.State.Lazy
 import BackEnd.Frame
 import FrontEnd.Parser
@@ -10,6 +10,7 @@ import BackEnd.GenKill
 import Data.HashMap as HashMap hiding (map, (\\), union, filter)
 import Data.Maybe
 import Data.List
+import BackEnd.Temp as Temp
 
 {-
 1. take translation from translate and change them to quadruples -- done!
@@ -71,60 +72,78 @@ testQuadfile file = do
 -- {-if n(move const to temp) reches f with no def of n in between-}
 -- --stm[n] uses t
 -- --in[n] = [n1, n2, n3...] has only one def of t then replace t in stm[n] with const
--- constProp (stms@(s:rest), table) = (constProp' stms table 0 stms,
+-- constProp (stms, table) = (newStm, newTable)
+--   where
+--     newStm = constProp' stms table 0 []
+--     newTable = do
+--       flow <- wrapReachGK newStm
+--       return $ genReachingDef flow
 -- constProp stmAndTable = stmAndTable
---
--- constProp' :: [Stm] -> ReachingDef -> Int -> [Stm] -> [Stm]
--- constProp' stm table i newStm
---   | i == length stm = stm
---   | otherwise =
---       where
---         s = stm !! i
---         used = getRegStm s
---         inDef = fst $ snd (table !! i)
---         numDefs = map (findConst stm  0 0) used --[(num, c)]
---
---
---
--- replaceStm :: Stm -> Temp.Temp -> Int -> Stm
--- replaceStm (MOV (Temp t1) e) t c = MOV (Temp t1) (replaceExp t c e)
--- replaceStm (MOV e (Temp t)) t c = MOV e (CONSTI c)
--- replaceStm (CJUMP cond e1 e2 l1 l2) t c =
---   CJUMP cond (replaceExp t c e1) (replaceExp t c e2) l1 l2
--- replaceStm (EXP (CALL f exps)) t c = EXP (CALL f (map (replaceExp t c) exps))
--- replaceStm stm _ _ = stm
---
--- replaceExp :: Temp.Temp -> Int -> Exp -> Exp
--- replaceExp t c (Temp t) = CONSTI c
--- replaceExp t c (BINEXP bop e1 e2) = BINEXP bop (replaceExp t c e1) (replaceExp t c e2)
--- replaceExp (MEM e i) = MEM (replaceExp t c e) i
--- replaceExp (CALL f exps) = CALL f (map (replaceExp t c) exps)
--- replaceExp _ = []
---
---
--- findConst :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
--- findConst [] num c t = (num, c) --number of definition of t with the latest one at pos with const i
--- findConst ((MOV (TEMP t) (CONSTI i)):ds) num c t = findConst ds (num + 1) i t
--- findConst (d:ds) num c t = findConst ds num c t
---
--- --get the list of temps used in one statement
--- getRegStm :: Stm -> [Temp.Temp]
--- getRegStm (MOV (Temp t) e) = getRegExp e
--- getRegStm (MOV _ (Temp t)) = [t]
--- getRegStm (CJUMP _ e1 e2 _ _) = concat $ map getRegExp [e1,e2]
--- getRegStm (EXP (CALL _ exps)) = concat $ map getRegExp exps
--- getRegStm _ = []
---
--- getRegExp :: Exp -> [Temp.Temp]
--- getRegExp (Temp t) = [t]
--- getRegExp (BINEXP _ e1 e2) = concat $ map getRegExp [e1,e2]
--- getRegExp (MEM e _) = getRegExp e
--- getRegExp (CALL _ exps) = concat $ map getRegExp exps
--- getRegEXp _ = []
+
+constProp' :: [Stm] -> ReachingDef -> Int -> [Stm] -> [Stm]
+constProp' stm table i newStm
+  | i == length stm = newStm
+  | otherwise = constProp' stm table (i + 1) (newStm ++ [new])
+      where
+        s = stm !! i
+        used = getRegStm s --list of registers used in s
+        inDef = fst $ snd (table !! i) --register definition reaches s
+        --number of definition of t with const c
+        numDefs = map (findConst stm  0 0) used --[(num, c)]
+        new = replaceStm s used numDefs
+
+replaceStm :: Stm -> [Temp.Temp] -> [(Int, Int)] -> Stm
+replaceStm stm [] [] = stm
+replaceStm stm (t:ts) ((1, c):rest) = replaceStm stm' ts rest
+    where
+      stm' = replaceStm' stm t c
+replaceStm stm _ _ = stm
+
+replaceStm' :: Stm -> Temp.Temp -> Int -> Stm
+replaceStm' (MOV (TEMP t1) e) t c = MOV (TEMP t1) (replaceExp t c e)
+replaceStm' stm@(MOV e (TEMP t1)) t c
+  | t1 == t = MOV e (CONSTI c)
+  | otherwise = stm
+replaceStm' (CJUMP cond e1 e2 l1 l2) t c =
+  CJUMP cond (replaceExp t c e1) (replaceExp t c e2) l1 l2
+replaceStm' (EXP (CALL f exps)) t c = EXP (CALL f (map (replaceExp t c) exps))
+replaceStm' stm _ _ = stm
+
+replaceExp :: Temp.Temp -> Int -> Exp -> Exp
+replaceExp t c e@(TEMP t1)
+  | t == t1 = CONSTI c
+  | otherwise = e
+replaceExp t c (BINEXP bop e1 e2) = BINEXP bop (replaceExp t c e1) (replaceExp t c e2)
+replaceExp t c (MEM e i) = MEM (replaceExp t c e) i
+replaceExp t c (CALL f exps) = CALL f (map (replaceExp t c) exps)
+replaceExp _ _ e = e
+
+
+findConst :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
+findConst [] num c t = (num, c) --number of definition of t with the latest one at pos with const c
+findConst ((MOV (TEMP t1) (CONSTI i)):ds) num c t
+  | t1 == t = findConst ds (num + 1) i t
+  | otherwise = findConst ds num c t
+findConst (d:ds) num c t = findConst ds num c t
+
+--get the list of temps used in one statement
+getRegStm :: Stm -> [Temp.Temp]
+getRegStm (MOV (TEMP t) e) = getRegExp e
+getRegStm (MOV _ (TEMP t)) = [t]
+getRegStm (CJUMP _ e1 e2 _ _) = concat $ map getRegExp [e1,e2]
+getRegStm (EXP (CALL _ exps)) = concat $ map getRegExp exps
+getRegStm _ = []
+
+getRegExp :: Exp -> [Temp.Temp]
+getRegExp (TEMP t) = [t]
+getRegExp (BINEXP _ e1 e2) = concat $ map getRegExp [e1,e2]
+getRegExp (MEM e _) = getRegExp e
+getRegExp (CALL _ exps) = concat $ map getRegExp exps
+getRegEXp _ = []
 
 eseq :: State TranslateState (Exp -> Exp)
 eseq = do
-    t <- newTemp
+    t <- Translate.newTemp
     return $ \e -> (ESEQ (MOV (TEMP t) e) (TEMP t))
 
 twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a
@@ -298,7 +317,7 @@ genReachingDef flow = iterateReachingDef gk init pred
         pred = genReachPred flow
 
 reachingDefSample = [MOV (TEMP 1) (CONSTI 5), MOV (TEMP 2) (CONSTI 1), LABEL "L1",
-                     CJUMP BackEnd.IR.LT (TEMP 2) (TEMP 1) "L2" "LNEXT", LABEL "LNEXT",
+                     CJUMP IR.LT (TEMP 2) (TEMP 1) "L2" "LNEXT", LABEL "LNEXT",
                      MOV (TEMP 2) (BINEXP PLUS (TEMP 2) (TEMP 2)), JUMP (NAME "L1") ["L1"],
                      LABEL "L2", MOV (TEMP 1) (BINEXP MINUS (TEMP 2) (TEMP 1)), MOV (TEMP 2) (CONSTI 0)]
 

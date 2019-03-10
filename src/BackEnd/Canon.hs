@@ -220,7 +220,7 @@ doStm p@(POPREGS _) = return p
 doStm (MOV (TEMP t) (CALL (NAME f) es))
   | allSimple es = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
   | otherwise = do
-    (stm, es') <- reorderCall es 
+    (stm, es') <- reorderCall es
     doStm (SEQ stm (MOV (TEMP t) (CALL (NAME f) es')))
 
 doStm (MOV m@(MEM e s) c@(CALL (NAME f) es)) = do
@@ -297,14 +297,17 @@ doStm (SEQ stm1 stm2) = do
 doStm (EXP (CALL (NAME f) es))
   | allSimple es = reorderStm es (\es -> EXP (CALL (NAME f) es))
   | otherwise = do
-    (stm, es') <- reorderCall es 
+    (stm, es') <- reorderCall es
     doStm (SEQ stm (EXP (CALL (NAME f) es')))
 
 doStm (EXP (CALL e es))
   | allSimple (e:es) = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
   | otherwise = do
-    (stm, (e':es')) <- reorderCall (e:es) 
-    doStm (SEQ stm (EXP (CALL e' es')))
+    result <- reorderCall (e:es)
+    case result of
+      (stm, (e':es')) -> doStm (SEQ stm (EXP (CALL e' es')))
+      otherwise -> fail ""
+
 
 doStm (EXP e)
   = reorderStm [e] (\(e:_) -> EXP e)
@@ -321,10 +324,10 @@ notSimple (NAME _) = False
 notSimple (TEMP _) = False
 notSimple _ = True
 
-reorderCall :: [Exp] -> State TranslateState (Stm, [Exp]) 
+reorderCall :: [Exp] -> State TranslateState (Stm, [Exp])
 reorderCall exps = reorderCall' exps [] NOP
 
-reorderCall' :: [Exp] -> [Exp] -> Stm -> State TranslateState (Stm, [Exp]) 
+reorderCall' :: [Exp] -> [Exp] -> Stm -> State TranslateState (Stm, [Exp])
 reorderCall' [] acc stm = return (stm, acc)
 reorderCall' (e:es) acc stm = do
   if(notSimple e) then do
@@ -377,9 +380,13 @@ doExp (CALL (NAME f) es)
 doExp (CALL e es)
   | allSimple es = reorderExp (e:es) (\(e:es) -> CALL e es)
   | otherwise = do
-    (stm, (e': es')) <- reorderCall (e: es)
-    (innerStm, innerExp) <- doExp (CALL e' es')
-    return (SEQ stm innerStm, innerExp)
+    result <- reorderCall (e:es)
+    case result of
+      (stm, (e':es')) -> do
+        (innerStm, innerExp) <- doExp (CALL e' es')
+        return (SEQ stm innerStm, innerExp)
+      otherwise -> fail ""
+
 
 doExp (ESEQ stm e) = do
   stm' <- doStm stm

@@ -147,8 +147,10 @@ popLevel = do
 getCurrFrame :: State TranslateState Frame.Frame
 getCurrFrame = do
   state <- get
-  (level:rest) <- verifyLevels $ levels state
-  return $ levelFrame level
+  result <- verifyLevels $ levels state
+  case result of
+    (level:rest) -> return $ levelFrame level
+    otherwise -> fail "verify level fails"
 
 addBuiltIn :: [Int] -> State TranslateState ()
 addBuiltIn (i:is) = do
@@ -211,13 +213,16 @@ addFragment frag = do
 getVarEntry :: String -> State TranslateState Exp
 getVarEntry symbol = do
   state <- get
-  ((VarEntry (Access frame access) t), prevLevels) <- (find' (levels state) [])
-  case access of
-    Frame.InReg temp -> return $ TEMP temp
-    Frame.InFrame offset -> do
-      let   prevSize = sum (map levelSize prevLevels)
-            targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
-      return $ CALL (NAME "#memaccess") [(CONSTI $  (prevSize + targetOffset))]
+  result <-(find' (levels state) [])
+  case result of
+    ((VarEntry (Access frame access) t), prevLevels) ->
+      case access of
+        Frame.InReg temp -> return $ TEMP temp
+        Frame.InFrame offset -> do
+          let   prevSize = sum (map levelSize prevLevels)
+                targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
+          return $ CALL (NAME "#memaccess") [(CONSTI $  (prevSize + targetOffset))]
+    otherwise -> fail ""
 
   where find' :: [Level] -> [Level] -> State TranslateState (EnvEntry, [Level])
         find' (l:levels) prev
@@ -378,10 +383,13 @@ translateStatF (Ann (While expr stms) _) = do
 translateStatF (Ann (Subroutine stms) _) = do
   level <- newLevel
   pushLevel level
-  Nx stms' <- translateStatListF stms
-  adjustSP' <- adjustSP
-  popLevel
-  return $ Nx (SEQ stms' adjustSP')
+  result <- translateStatListF stms
+  case result of
+    Nx stms' -> do
+      adjustSP' <- adjustSP
+      popLevel
+      return $ Nx (SEQ stms' adjustSP')
+    otherwise -> fail ""
 
 translateStatF (Ann (FuncStat f) _) = do
   f' <- translateFuncAppF f
