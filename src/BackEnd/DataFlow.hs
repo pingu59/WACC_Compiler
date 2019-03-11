@@ -37,19 +37,6 @@ testReachGKFile file = do
         (gkuser) = evalState (mapM wrapReachGK userFrags') gkstate
     return $ genReachingDef (gkmain ++ concat gkuser)
 
-testAGKFile file = do
-    ast <- parseFile file
-    ast' <- analyzeAST ast
-    let (stm, s) = runState (translate ast') newTranslateState;
-        userFrags = map (\(PROC stm _) -> stm) (procFrags s)
-        (qstm, qs') = runState (quadStm stm) s
-        (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
-        (stms, s') = runState (transform qstm) qs''
-        (userFrags', _) = runState (mapM transform qfrag) s'
-        (gkmain, gkstate) = runState (wrapAGK stms) newAState
-        (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
-    return $ genADef (gkmain ++ concat gkuser)
-
 testQuadfile file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
@@ -61,21 +48,6 @@ testQuadfile file = do
         (userFrags', _) = runState (mapM transform qfrag) s'
     return $ (stms ++ userFrags)
 
-testReachingExprFile file = do
-    ast <- parseFile file
-    ast' <- analyzeAST ast
-    let (stm, s) = runState (translate ast') newTranslateState;
-        userFrags = map (\(PROC stm _) -> stm) (procFrags s)
-        (qstm, qs') = runState (quadStm stm) s
-        (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
-        (stms, s') = runState (transform qstm) qs''
-        (userFrags', _) = runState (mapM transform qfrag) s'
-        (gkmain, gkstate) = runState (wrapAGK stms) newAState
-        (gkuser) = evalState (mapM wrapAGK userFrags') gkstate
-        (adef, _) = genADef (gkmain ++ concat gkuser)
-        rExpr = genReachingExpression adef
-    return $ rExpr
-
 testCSEFile file = do -- only with main
     ast <- parseFile file
     ast' <- analyzeAST ast
@@ -83,7 +55,7 @@ testCSEFile file = do -- only with main
         (qstm, qs') = runState (quadStm stm) s
         (stms, s') = runState (transform qstm) qs'
         (cseout, cseState) = runState (cse stms s') newAState 
-        transState = trans cseState -- get the translate state out
+        transState = trans_ cseState -- get the translate state out
     return cseout
 
 quadInterface stm = do 
@@ -333,8 +305,8 @@ iterateReachingDef gk this pred
             (gen, kill) = fromJust $ (Data.List.lookup) defid gk
             newOut = union  gen (in_ \\ kill)
 
-genReachingDef :: [ReachFlow] -> ReachingDef
-genReachingDef flow = iterateReachingDef gk init pred
+genReachingDef :: [ReachFlow] -> (ReachingDef, PredTable)
+genReachingDef flow = (iterateReachingDef gk init pred, pred)
     where
         (gk, init) = initReachingDef flow
         pred = genReachPred flow
@@ -363,7 +335,7 @@ testReachGK stms = do
 containsExpression :: Exp -> State AState [Exp]
 containsExpression target = do
     state <- get 
-    return $ nub $ concatMap (contains target) (wrappedFlow state)
+    return $ nub $ concatMap (contains target) (wrappedFlow_ state)
 
 containsMem :: [AFlow] -> [Exp]
 containsMem flows = concatMap containsOneMem flows
@@ -397,10 +369,10 @@ wrapAGK :: [Stm] -> State AState [AFlow]
 wrapAGK stms = do
     flows <- mapM addOneAGK stms
     state <- get
-    put $ state {memFlow = containsMem flows, wrappedFlow = flows}
+    put $ state {memFlow_ = containsMem flows, wrappedFlow_ = flows}
     flows' <- mapM wrapOneAGK flows
     state' <- get
-    put $ state' {wrappedFlow = flows'}
+    put $ state' {wrappedFlow_ = flows'}
 
     return flows'
 
@@ -411,12 +383,12 @@ addOneAGK s = newA s
 killMem :: AFlow -> State AState AFlow
 killMem e = do
     state <- get
-    return $ e {kill_ = memFlow state}
+    return $ e {kill_ = memFlow_ state}
 
 addExpr :: [Exp] -> State AState ()
 addExpr exprs = do
     state <- get
-    put $ state {allExpr = union (allExpr state) exprs}
+    put $ state {allExpr_ = union (allExpr_ state) exprs}
 
 -- Add Gen Kills
 wrapOneAGK :: AFlow -> State AState AFlow
@@ -427,7 +399,7 @@ wrapOneAGK a@(A (MOV (MEM _ _) _ ) _ _ _ _) = killMem a
 wrapOneAGK a@(A (MOV t (CALL _ _)) _ _ _ _) = do
     state <- get
     cexpr <- containsExpression t
-    return $ a {kill_ = union (memFlow state) cexpr}
+    return $ a {kill_ = union (memFlow_ state) cexpr}
 
 wrapOneAGK a@(A (MOV t b) _ _ _ _) = do
     cexpr <- containsExpression t
@@ -510,18 +482,18 @@ reachingOneExpression (defid, (in_, out_))
 cse :: [Stm] -> TranslateState -> State AState [Stm]
 cse stms transtate = do
     let (gk, gkstate) = runState (wrapAGK stms) newAState
-        (adef, pt_) = genADef gk
+        (adef, pt) = genADef gk
         rExpr = genReachingExpression adef
-    put $ gkstate {re = rExpr, trans = transtate, pt = pt_} -- put everything in the state
+    put $ gkstate {re_ = rExpr, trans_ = transtate, pt_ = pt} -- put everything in the state
     cseAll
     state <- get
-    return $ unA $ wrappedFlow state
+    return $ unA $ wrappedFlow_ state
 
 cseAll :: State AState [()]
 cseAll = do
     state <- get
-    mapM (addreTree) (wrappedFlow state)
-    mapM cseOne [0..(length (wrappedFlow state) - 1)]
+    mapM (addreTree) (wrappedFlow_ state)
+    mapM cseOne [0..(length (wrappedFlow_ state) - 1)]
 
 addreTree :: AFlow -> State AState ()
 addreTree flow = do
@@ -531,16 +503,16 @@ addreTree flow = do
 cseOne :: Int -> State AState ()
 cseOne targetNum = do 
     state <- get 
-    let flows = wrappedFlow state
+    let flows = wrappedFlow_ state
         target = flows !! targetNum
         rhs = getRHS (tree_ target)
-        reachingExpr = fromJust $ Data.List.lookup targetNum (re state) -- PRE: THE TABLE IS COMPLETE
+        reachingExpr = fromJust $ Data.List.lookup targetNum (re_ state) -- PRE: THE TABLE IS COMPLETE
     if (rhs == Nothing || (not $ elem (fromJust rhs) reachingExpr)) then do -- Not a move or Not reachable
         return ()
     else do
         -- find the previously defined exp
         let exprToChange = fromJust rhs
-            translateState = trans state
+            translateState = trans_ state
             (temp, translateState') = runState (Translate.newTemp) translateState 
         exprSources <- findExpr exprToChange targetNum
         mapM (transformSourceExpr temp) exprSources
@@ -561,21 +533,21 @@ transformSourceExpr temp (A tree gen kill defid ((MOV a b):res)) = do
 updateAFlow :: AFlow -> State AState ()
 updateAFlow flow = do        
     state <- get
-    let flows = wrappedFlow state
+    let flows = wrappedFlow_ state
         defid = defid_ flow
         (prev, aft) = splitAt defid flows
-    put $ state {wrappedFlow = prev ++ [flow] ++ (drop 1 aft)}
+    put $ state {wrappedFlow_ = prev ++ [flow] ++ (drop 1 aft)}
     return ()
 
 -- recursively find the previous instruction until expression not reachable i.e is created
 findExpr :: Exp -> Int -> State AState [AFlow]
 findExpr expr cur = do
     state <- get
-    let reTable = re state
+    let reTable = re_ state
     if (not $ elem expr (fromJust $ Data.List.lookup cur reTable)) then
-        return [(wrappedFlow state) !! cur]
+        return [(wrappedFlow_ state) !! cur]
     else do
-        let allpred = fromJust $ Data.List.lookup cur (pt state)
+        let allpred = fromJust $ Data.List.lookup cur (pt_ state)
         allSource <- mapM (findExpr expr) allpred
         if allSource == [] then 
             fail "SHOULD HAVE AT LEAST ONE SOURCE"
@@ -588,3 +560,13 @@ getRHS _ = Nothing
         
 unA :: [AFlow] -> [Stm]
 unA flows = concatMap reTree_ flows
+
+-- copy propagation --
+-- copyprop :: [Stm] -> TranslateState -> State ReachState [Stm]
+-- copyprop = do
+--     let (gk, gkstate) = runState (wrapReachGK stms) newReachState
+--         (rdef, pt_) = genReachingDef gk
+--     put $ gkstate {trans = transtate, pt = pt_} -- put everything in the state
+--     copyPropAll
+--     state <- get
+--     return $ unReach $ wrappedFlow state

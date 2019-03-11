@@ -19,9 +19,11 @@ data ReachFlow = M { tree :: Stm,
                      defid :: Int} deriving (Show, Eq)
 
 data ReachState = ReachState { idCount :: Int,
-                               tempMap :: HashMap.Map Int [Int]}
+                               tempMap :: HashMap.Map Int [Int],
+                               pt :: PredTable,
+                               wrappedFlow :: [ReachFlow]}
 
-newReachState = ReachState {idCount = 0, tempMap = HashMap.empty}
+newReachState = ReachState {idCount = 0, tempMap = HashMap.empty, pt = [], wrappedFlow = []}
 
 reachMov :: Stm -> State ReachState (Int, ReachFlow)
 reachMov t = do 
@@ -45,15 +47,15 @@ data AFlow = A {    tree_ :: Stm,
                     deriving (Show, Eq)
 
 data AState = AState {  idCount_ :: Int,
-                        memFlow :: [Exp], 
-                        wrappedFlow :: [AFlow],
-                        allExpr :: [Exp],
-                        re :: ReachingExpr,
-                        trans :: TranslateState,
-                        pt :: PredTable}
+                        memFlow_ :: [Exp], 
+                        wrappedFlow_ :: [AFlow],
+                        allExpr_ :: [Exp],
+                        re_ :: ReachingExpr,
+                        trans_ :: TranslateState,
+                        pt_ :: PredTable}
 
-newAState = AState {idCount_ = 0, memFlow = [], wrappedFlow = [], allExpr = [], re = [],
-                    trans = newTranslateState, pt = []} -- trans is for cse and is usd temporarily
+newAState = AState {idCount_ = 0, memFlow_ = [], wrappedFlow_ = [], allExpr_ = [], re_ = [],
+                    trans_ = newTranslateState, pt_ = []} -- trans is for cse and is usd temporarily
 
 newA :: Stm -> State AState AFlow
 newA t = do 

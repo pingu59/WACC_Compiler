@@ -698,7 +698,7 @@ munch file = do
       dataFrags = map munchDataFrag ( Translate.dataFrags s' )
       (qstm, qs) = runState (quadInterface stm) s'
       (stm', qs') = runState (cse qstm qs) newAState
-      s'' = trans qs' -- get the translate state out
+      s'' = trans_ qs' -- get the translate state out
       (userFrags', s''') = runState (mapM (\f -> transform f >>= \f' -> munchmany f') userFrags) s'' -- munch functions
       arms = evalState (munchmany stm') s'''
       substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] arms)

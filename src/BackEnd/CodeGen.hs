@@ -28,7 +28,7 @@ instrGen ast = do
   stms <- DataFlow.quadInterface stm
   state <- get
   let (cseout, cseState) = runState (cse stms state) GenKill.newAState 
-      transState = trans cseState -- get the translate state out
+      transState = trans_ cseState -- get the translate state out
   put transState
   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
   code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) -- 
