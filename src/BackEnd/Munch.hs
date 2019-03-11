@@ -656,7 +656,7 @@ createPair [(CONSTI fsize), (CONSTI ssize), f, s] = do
       strpaironstack= IOPER { assem = (S_ (STR W AL) (RTEMP tadddr) (Imm (RTEMP 13) 0)),
                               src = [tadddr, 13], dst = [], jump = []}
   return ([ld8, malloc, strPairAddr] ++ i1 ++ [(ldsize fsize), malloc, savefst, strfstaddr]
-           ++ i2 ++ [(ldsize ssize), malloc, savesnd, strsndaddr, strpaironstack], dummy)
+           ++ i2 ++ [(ldsize ssize), malloc, savesnd, strsndaddr, strpaironstack], tadddr)
 
 accessPair :: Bool -> [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
 accessPair isfst [MEM e ty] = do
