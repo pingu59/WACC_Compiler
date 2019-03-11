@@ -734,6 +734,6 @@ testCP stms = do
 
 putBackMemAccess :: [Stm] -> [Stm]
 putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV (MEM m size) c) : rest)
-    | m == (TEMP t) = (MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest
+    | m == (TEMP t) && t /= 13 = ((MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest)
 putBackMemAccess (x:xs) = x : (putBackMemAccess xs)
 putBackMemAccess [] = []
