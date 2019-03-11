@@ -32,7 +32,7 @@ justret e = do
 munchExp :: Exp -> State TranslateState ([ASSEM.Instr], Temp)
 munchExp (CALL (NAME "#retVal") [e]) = justret e
 
-munchExp (CALL (NAME "#memaccess") [CONSTI i, _]) = do
+munchExp (CALL (NAME "#memaccess") ((CONSTI i):_)) = do
   t <- newTemp
   return ([IOPER {assem = CBS_ (ADD NoSuffix AL) (RTEMP t) SP (IMM i),
                  src = [13], dst = [t], jump = []}], t)
@@ -373,7 +373,6 @@ condExp (BINEXP bop e (CONSTI int)) = do
   case cbs of
     Nothing -> fail ""
     otherwise -> return $ \c -> (i1 ++ [calc c], t1)
-
 
 condExp (BINEXP bop e1 e2) = do
   (i1, t1) <- munchExp e1
@@ -897,8 +896,8 @@ p_check_array_bounds = do
       m2 = "ArrayIndexOutOfBoundsError: index too large"
   msgneg <- newDataLabel
   msgover <- newDataLabel
-  addFragment (Frame.STRING msgneg ("\"" ++ m1 ++ "\\0\"") (length m1 + 1))
-  addFragment (Frame.STRING msgover ("\"" ++ m2 ++ "\\0\"") (length m2 + 1))
+  addFragment (Frame.STRING msgneg ("\"" ++ m1 ++ "\\0\"") (length m1 + 2))
+  addFragment (Frame.STRING msgover ("\"" ++ m2 ++ "\\0\"") (length m2 + 2))
   return [add_label "p_check_array_bounds",
           pushlr,
           cmp_r0,

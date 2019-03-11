@@ -31,14 +31,14 @@ instrGen ast = do
   put transState
   if(cseout == copyPropstms) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess cseout) --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
   else do
     let copyPropstms' = evalState (copyprop cseout) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropstms') --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess copyPropstms') --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
