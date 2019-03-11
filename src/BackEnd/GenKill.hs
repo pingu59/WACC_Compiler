@@ -22,11 +22,10 @@ data ReachFlow = M { tree :: Stm,
 
 data ReachState = ReachState { idCount :: Int,
                                tempMap :: HashMap.Map Int [Int],
-                               pt :: PredTable,
                                wrappedFlow :: [ReachFlow],
                                rd :: ReachingDef}
 
-newReachState = ReachState {idCount = 0, tempMap = HashMap.empty, pt = [], wrappedFlow = [],
+newReachState = ReachState {idCount = 0, tempMap = HashMap.empty, wrappedFlow = [],
                             rd = []}
 
 reachMov :: Stm -> State ReachState (Int, ReachFlow)
