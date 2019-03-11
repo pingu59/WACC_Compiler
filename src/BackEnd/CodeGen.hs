@@ -10,6 +10,9 @@ import BackEnd.Canon as Canon
 import BackEnd.Munch as Munch
 import BackEnd.RegAlloc as RegAlloc
 import BackEnd.Assem as Assem
+import BackEnd.DataFlow as DataFlow
+import BackEnd.GenKill as GenKill
+import FrontEnd.SemanticAnalyzer
 
 
 codeGen :: ProgramF () -> IO String
@@ -22,9 +25,13 @@ instrGen ast = do
   stm <- Translate.translate ast
   builtInFrags' <- builtInFrags
   dataFrags' <- dataFrags
-  stms <- Canon.transform stm
+  stms <- DataFlow.quadInterface stm
+  state <- get
+  let (cseout, cseState) = runState (cse stms state) GenKill.newAState 
+      transState = trans cseState -- get the translate state out
+  put transState
   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-  code <- liftM Munch.optimizeInstrs (Munch.munchmany stms)
+  code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) -- 
   return (userFrags' ++ [code], dataFrags', builtInFrags')
 
 dataFrags :: State Translate.TranslateState [[Assem.Instr]]
@@ -48,3 +55,7 @@ genProcFrags ids = do
   let gens = map (\n -> Munch.genBuiltIns !! n) ids
   pfrags <- foldM (\acc f -> f >>= \pfrag -> return $ acc ++ [pfrag]) [] gens
   return pfrags
+
+seeMunch file = do 
+  ast <- analyzeFile file
+  return $ evalState (instrGen ast) Translate.newTranslateState

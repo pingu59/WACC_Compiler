@@ -16,6 +16,8 @@ import BackEnd.Translate as Translate
 import BackEnd.Frame as Frame
 import BackEnd.Builtin
 import BackEnd.Canon as C hiding (newTemp)
+import BackEnd.DataFlow
+import BackEnd.GenKill
 
 
 bopToCBS :: BOp ->  Maybe (Suffix -> Cond -> Calc)
@@ -155,8 +157,8 @@ munchExp (BINEXP DIV e1 e2) = do
   case (constBop e1 e2 DIV) of
     Just result -> do
       t <- newTemp
-      let divide = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t]}
+      let divide = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t], jump = []}
       return $ ([divide], t)
     Nothing -> do
       addBuiltIn id_p_check_divide_by_zero
@@ -261,8 +263,8 @@ munchExp (BINEXP MUL e1 e2) = do -- only the lower register is returned
   case (constBop e1 e2 MUL) of
     Just result -> do
       t <- newTemp
-      let multiply = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t]}
+      let multiply = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t], jump = []}
       return $ ([multiply], t)
     Nothing -> do
       addBuiltIn id_p_throw_overflow_error
@@ -342,8 +344,8 @@ condExp (BINEXP PLUS e1 e2) = do
   case (constBop e1 e2 PLUS) of
     Just result -> do
       t <- newTemp
-      let plus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t]}
+      let plus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t], jump = []}
       return $ \c -> ([plus], t)
     Nothing -> do
       (i2, t2) <- munchExp e2
@@ -353,8 +355,8 @@ condExp (BINEXP MINUS e1 e2) = do
   case (constBop e1 e2 MINUS) of
     Just result -> do
       t <- newTemp
-      let minus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t]}
+      let minus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
+                            src = [], dst = [t], jump = []}
       return $ \c -> ([minus], t)
     Nothing -> do
       (i2, t2) <- munchExp e2
@@ -628,7 +630,7 @@ munchBuiltInFuncFrag (PROC stm frame) = do
 
 munchDataFrag :: Fragment -> [ASSEM.Instr]
 munchDataFrag (STRING label str l)
-  = [ILABEL {assem = (M label l str), lab = label}]
+  = [ILABEL {assem = (ARM.M label l str), lab = label}]
 --subrtacting the space occupied by ""
 
 createPair :: [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
@@ -694,7 +696,9 @@ munch file = do
       (builtInFrags, s') = runState (genProcFrags (Set.toList $ builtInSet s)) s -- generate builtIn
       userFrags = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags s)
       dataFrags = map munchDataFrag ( Translate.dataFrags s' )
-      (stm', s'') = runState (transform stm) s'
+      (qstm, qs) = runState (quadInterface stm) s'
+      (stm', qs') = runState (cse qstm qs) newAState
+      s'' = trans qs' -- get the translate state out
       (userFrags', s''') = runState (mapM (\f -> transform f >>= \f' -> munchmany f') userFrags) s'' -- munch functions
       arms = evalState (munchmany stm') s'''
       substitute = optimise (normAssem [(13, SP), (14, LR), (15, PC), (1, R1), (0, R0)] arms)

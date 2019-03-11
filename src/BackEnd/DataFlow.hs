@@ -86,6 +86,11 @@ testCSEFile file = do -- only with main
         transState = trans cseState -- get the translate state out
     return cseout
 
+quadInterface stm = do 
+    qstm <- quadStm stm
+    stms <- transform qstm 
+    return stms
+
 -- constProp :: ([Stm],ReachingDef) -> ([Stm],ReachingDef)
 -- {-if n(move const to temp) reches f with no def of n in between-}
 -- --stm[n] uses t
