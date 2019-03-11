@@ -58,6 +58,15 @@ testCSEFile file = do -- only with main
         transState = trans_ cseState -- get the translate state out
     return cseout
 
+testCopyPropFile file = do -- only with main
+    ast <- parseFile file
+    ast' <- analyzeAST ast
+    let (stm, s) = runState (translate ast') newTranslateState;
+        (qstm, qs') = runState (quadStm stm) s
+        (stms, s') = runState (transform qstm) qs'
+        copy = evalState (copyprop stms) newReachState
+    return copy
+
 quadInterface stm = do 
     qstm <- quadStm stm
     stms <- transform qstm 
@@ -231,7 +240,7 @@ analyzeReachGK :: [Stm] -> State ReachState ()
 analyzeReachGK stms = do
     let (gk, gkstate) = runState (wrapReachGK stms) newReachState
         (rdef, pt_) = genReachingDef gk
-    put $ gkstate {wrappedFlow = gk, pt = pt_, rd = rdef} -- put everything in the state
+    put $ gkstate {wrappedFlow = gk, rd = rdef} -- put everything in the state
     return ()
 
 -- wrap gk data structure for both types of analysis
@@ -296,10 +305,10 @@ initReachingDef flows = (map takeReachGK flows, map initReach flows)
         initReach (M _ _ _ defid _) = (defid, ([], []))
         initReach (E tree defid _) = (defid, ([], []))
 
-iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> ReachingDef
-iterateReachingDef gk this pred
-  | this == next = this
-  | otherwise = iterateReachingDef gk next pred
+iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> Int -> ReachingDef
+iterateReachingDef gk this pred times
+  | this == next || times > (length pred) * (length pred) = this  -- SETTING A HARD LIMIT ON THE NUMBER OF ITERATIONS
+  | otherwise = iterateReachingDef gk next pred (times + 1)
   where
     next = iterateOnce this []
     iterateOnce :: ReachingDef -> ReachingDef ->  ReachingDef
@@ -314,7 +323,7 @@ iterateReachingDef gk this pred
             newOut = union  gen (in_ \\ kill)
 
 genReachingDef :: [ReachFlow] -> (ReachingDef, PredTable)
-genReachingDef flow = (iterateReachingDef gk init pred, pred)
+genReachingDef flow = (iterateReachingDef gk init pred 0, pred)
     where
         (gk, init) = initReachingDef flow
         pred = genReachPred flow
@@ -573,7 +582,6 @@ unA flows = concatMap reTree_ flows
 copyprop :: [Stm] -> State ReachState [Stm]
 copyprop stms = do
     analyzeReachGK stms
-    return []
     copyPropAll
     state <- get
     return $ unReach $ wrappedFlow state
@@ -585,12 +593,120 @@ copyPropAll = do
     mapM copyPropOne [0..(length (wrappedFlow state) - 1)]
 
 copyPropOne :: Int -> State ReachState ()
-copyPropOne = undefined
+copyPropOne targetNum = do
+    state <- get
+    let flows = wrappedFlow state
+        targetFlow = flows !! targetNum
+        target = tree targetFlow
+    case target of
+        (MOV (TEMP a) (TEMP b)) -> applyCopyProp targetFlow
+        otherwise -> return ()
+
+applyCopyProp :: ReachFlow -> State ReachState ()
+applyCopyProp flow = do
+    let (MOV (TEMP a) (TEMP b)) = tree flow
+        idnum = defid flow
+    rf <- reachedFLow idnum
+    outs <- mapM (tryCopyProp a) rf 
+    if (filter (not) outs) /= [] then 
+        return () -- cannot remove this mov
+    else do
+        bool <- updateReachFlow $ flow {reTree = []}
+        return ()
+
+tryCopyProp :: Int -> Int -> State ReachState Bool
+tryCopyProp temp id_ = do
+    state <- get
+    let thisFlow = (wrappedFlow state) !! id_
+    if (usesTemp temp (tree thisFlow)) then do
+        canOptimise <- onlyReachOne id_ temp
+        if (canOptimise >= 0) then
+            subsTemp temp canOptimise id_
+        else
+            return False -- Indicates this mov cannot be removed
+    else
+        return True
+        where
+            usesTemp :: Int -> Stm -> Bool
+            usesTemp temp (MOV (MEM b _) a) = ((b == (TEMP temp)) || (a == (TEMP temp)))
+            usesTemp temp (MOV _ (TEMP t)) = t == temp
+            usesTemp temp (MOV _ (BINEXP _ a b)) = (a == (TEMP temp)) || (b == (TEMP temp))
+            usesTemp temp (MOV _ (MEM (TEMP t) _)) = t == temp
+            usesTemp temp (CJUMP _ a b _ _) = (a == (TEMP temp)) || (b == (TEMP temp))
+            usesTemp temp (EXP (CALL _ exps)) = elem (TEMP temp) exps
+            usesTemp temp (MOV _ (CALL _ exps)) = elem (TEMP temp) exps
+            usesTemp _ _ = False
+
+            definesTemp :: Int -> Int -> State ReachState Int
+            definesTemp temp id_ = do
+                state <- get
+                let idflow = (wrappedFlow state) !! id_
+                case tree idflow of
+                    (MOV (TEMP t) (TEMP target)) -> if t == temp then 
+                                                        return target
+                                                    else
+                                                        return (-1)
+                    otherwise -> return (-1)
+
+            onlyReachOne :: Int -> Temp -> State ReachState Int
+            onlyReachOne id_ temp = do
+                state <- get
+                let (in_, _) = fromJust $ Data.List.lookup id_ (rd state)
+                all <- mapM (definesTemp temp) in_
+                case filter (>= 0) all of
+                    [target] -> return target
+                    otherwise -> return (-1)
+
+subsTemp :: Int -> Int -> Int -> State ReachState Bool
+subsTemp from to flowid = do
+    state <- get
+    let flow = (wrappedFlow state) !! flowid
+    case tree flow of
+        (MOV (MEM a size) b) -> do
+            let newa = if a == (TEMP from) then (TEMP to) else a
+                newb = if b == (TEMP from) then (TEMP to) else b
+            updateReachFlow $ flow {reTree = [(MOV (MEM newa size) newb)]}
+        (MOV a (TEMP _)) -> updateReachFlow $ flow {reTree = [(MOV a (TEMP to))]}
+        (MOV a (BINEXP rop b c)) -> do
+            let newb = if b == (TEMP from) then (TEMP to) else b
+                newc = if c == (TEMP from) then (TEMP to) else c
+            updateReachFlow $ flow {reTree = [(MOV a (BINEXP rop newb newc))]}
+        (MOV a (MEM (TEMP _) size)) -> updateReachFlow $ flow {reTree = [(MOV a (MEM (TEMP to) size))]}
+        (CJUMP rop a b t f) -> do
+            let newa = if a == (TEMP from) then (TEMP to) else a
+                newb = if b == (TEMP from) then (TEMP to) else b
+            updateReachFlow $ flow {reTree = [(CJUMP rop newa newb t f)]}
+        (EXP (CALL f exps)) -> updateReachFlow $ flow {reTree = [(EXP (CALL f 
+                                [ if(x == (TEMP from)) then (TEMP to) else x | x <- exps]))]}
+        (MOV a (CALL f exps)) -> updateReachFlow $ flow {reTree = [(MOV a (CALL f 
+                                [ if(x == (TEMP from)) then (TEMP to) else x | x <- exps]))]}
+
+reachedFLow :: Int -> State ReachState [Int]
+reachedFLow r = do
+    state <- get
+    let rd_ = rd state
+    return [id_ | (id_, (in_, out_)) <- rd_, elem r in_] 
 
 addreTree :: ReachFlow -> State ReachState ()
-addreTree = undefined
+addreTree flow = do
+    bool <- updateReachFlow $ flow {reTree = [tree flow]}
+    return ()
 
 unReach :: [ReachFlow] -> [Stm]
 unReach flows = concatMap reTree flows
 
+updateReachFlow :: ReachFlow -> State ReachState Bool
+updateReachFlow flow = do        
+    state <- get
+    let flows = wrappedFlow state
+        defid_ = defid flow
+        (prev, aft) = splitAt defid_ flows
+    put $ state {wrappedFlow = prev ++ [flow] ++ (drop 1 aft)}
+    return True
 
+copyPropStms = [(MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI 4))),
+                 (MOV (TEMP 16) (TEMP 13)), (MOV (MEM (TEMP 16) 4) (CONSTI 42))]
+
+testCP stms = do 
+    let out = evalState (copyprop stms) newReachState
+    putStrLn $ show out
