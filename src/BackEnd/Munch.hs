@@ -73,6 +73,7 @@ munchExp (CALL (NAME "#neg") [(CONSTI i)]) = do
   return ([ldr], t)
 
 munchExp (CALL (NAME "#neg") [e]) = do
+  addBuiltIn id_p_throw_overflow_error
   (i, t) <- munchExp e
   let rsbs = IOPER { assem = CBS_ (RSB S AL) (RTEMP t) (RTEMP t) (IMM 0),
                      src = [t], dst = [t], jump = []}
@@ -156,10 +157,10 @@ munchExp (CALL (NAME n) e)
 munchExp (BINEXP DIV e1 e2) = do
   case (constBop e1 e2 DIV) of
     Just result -> do
-      t <- newTemp
-      let divide = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t], jump = []}
-      return $ ([divide], t)
+      (i1, t1) <- munchExp e1
+      let divide = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t1) result,
+                            src = [], dst = [t1], jump = []}
+      return $ ([divide], 0)
     Nothing -> do
       addBuiltIn id_p_check_divide_by_zero
       (i1, t1) <- munchExp e1 -- dividend
@@ -177,10 +178,10 @@ munchExp (BINEXP DIV e1 e2) = do
 munchExp (BINEXP MOD e1 e2) = do
   case (constBop e1 e2 MOD) of
     Just result -> do
-      t <- newTemp
-      let modulus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t]}
-      return $ ([modulus], t)
+      (i1, t1) <- munchExp e1
+      let modulus = IMOV {assem = MC_ (ARM.MOV AL) (RTEMP t1) result,
+                            src = [], dst = [t1]}
+      return $ ([modulus], t1)
     Nothing -> do
       addBuiltIn id_p_check_divide_by_zero
       (i1, t1) <- munchExp e1 -- dividend
@@ -262,10 +263,10 @@ munchExp (TEMP t) = return ([],t)
 munchExp (BINEXP MUL e1 e2) = do -- only the lower register is returned
   case (constBop e1 e2 MUL) of
     Just result -> do
-      t <- newTemp
-      let multiply = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t], jump = []}
-      return $ ([multiply], t)
+      (i1, t1) <- munchExp e1
+      let multiply = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t1) result,
+                            src = [], dst = [t1], jump = []}
+      return $ ([multiply], t1)
     Nothing -> do
       addBuiltIn id_p_throw_overflow_error
       (i1, t1) <- munchExp e1
@@ -343,10 +344,10 @@ condExp (BINEXP bop e1@(CONSTI int1) e2@(CONSTI int2))
 condExp (BINEXP PLUS e1 e2) = do
   case (constBop e1 e2 PLUS) of
     Just result -> do
-      t <- newTemp
-      let plus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t], jump = []}
-      return $ \c -> ([plus], t)
+      (i1, t1) <- munchExp e1
+      let plus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t1) result,
+                            src = [], dst = [t1], jump = []}
+      return $ \c -> ([plus], t1)
     Nothing -> do
       (i2, t2) <- munchExp e2
       plusMinus e1 (R (RTEMP t2)) ADD [t2] i2
@@ -354,10 +355,10 @@ condExp (BINEXP PLUS e1 e2) = do
 condExp (BINEXP MINUS e1 e2) = do
   case (constBop e1 e2 MINUS) of
     Just result -> do
-      t <- newTemp
-      let minus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t) result,
-                            src = [], dst = [t], jump = []}
-      return $ \c -> ([minus], t)
+      (i1, t1) <- munchExp e1
+      let minus = IOPER {assem = MC_ (ARM.MOV AL) (RTEMP t1) result,
+                            src = [], dst = [t1], jump = []}
+      return $ \c -> ([minus], t1)
     Nothing -> do
       (i2, t2) <- munchExp e2
       plusMinus e1 (R (RTEMP t2)) SUB [t2] i2
@@ -656,7 +657,7 @@ createPair [(CONSTI fsize), (CONSTI ssize), f, s] = do
       strpaironstack= IOPER { assem = (S_ (STR W AL) (RTEMP tadddr) (Imm (RTEMP 13) 0)),
                               src = [tadddr, 13], dst = [], jump = []}
   return ([ld8, malloc, strPairAddr] ++ i1 ++ [(ldsize fsize), malloc, savefst, strfstaddr]
-           ++ i2 ++ [(ldsize ssize), malloc, savesnd, strsndaddr, strpaironstack], dummy)
+           ++ i2 ++ [(ldsize ssize), malloc, savesnd, strsndaddr, strpaironstack], tadddr)
 
 accessPair :: Bool -> [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
 accessPair isfst [MEM e ty] = do

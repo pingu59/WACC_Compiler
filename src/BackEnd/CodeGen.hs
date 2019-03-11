@@ -23,15 +23,15 @@ codeGen ast = do
 instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[Assem.Instr]], [[Assem.Instr]])
 instrGen ast = do
   stm <- Translate.translate ast
-  builtInFrags' <- builtInFrags
-  dataFrags' <- dataFrags
   stms <- DataFlow.quadInterface stm
   state <- get
-  let (cseout, cseState) = runState (cse stms state) GenKill.newAState 
+  let (cseout, cseState) = runState (cse stms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-  code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) -- 
+  code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
+  builtInFrags' <- builtInFrags
+  dataFrags' <- dataFrags
   return (userFrags' ++ [code], dataFrags', builtInFrags')
 
 dataFrags :: State Translate.TranslateState [[Assem.Instr]]
@@ -56,6 +56,6 @@ genProcFrags ids = do
   pfrags <- foldM (\acc f -> f >>= \pfrag -> return $ acc ++ [pfrag]) [] gens
   return pfrags
 
-seeMunch file = do 
+seeMunch file = do
   ast <- analyzeFile file
   return $ evalState (instrGen ast) Translate.newTranslateState
