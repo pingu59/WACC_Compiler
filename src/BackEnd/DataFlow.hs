@@ -731,3 +731,9 @@ copyPropStms = [(MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI 4))),
 testCP stms = do
     let out = evalState (copyprop stms) newReachState
     putStrLn $ show out
+
+putBackMemAccess :: [Stm] -> [Stm]
+putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV (MEM m size) c) : rest)
+    | m == (TEMP t) = (MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest
+putBackMemAccess (x:xs) = x : (putBackMemAccess xs)
+putBackMemAccess [] = []

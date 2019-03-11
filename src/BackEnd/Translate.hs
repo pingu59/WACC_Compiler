@@ -13,6 +13,7 @@ import qualified BackEnd.Temp as Temp
 import BackEnd.Assem as Assem
 import BackEnd.IR as IR
 import BackEnd.Builtin
+import Data.Hashable
 
 
 data Access = Access Frame.Frame Frame.Access deriving (Eq, Show)
@@ -222,7 +223,9 @@ getVarEntry symbol = do
           let   prevSize = sum (map levelSize prevLevels)
                 targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
                 spTotal = sum (map levelSize (levels state))
-          return $ CALL (NAME "#memaccess") [CONSTI $  (prevSize + targetOffset), CONSTI spTotal]
+                frame = levelFrame ((levels state) !! 0)
+          return $ CALL (NAME "#memaccess") [CONSTI $  (prevSize + targetOffset), CONSTI spTotal,
+                                                        CONSTI (hash $ Frame.frameName frame)]
     otherwise -> fail ""
 
   where find' :: [Level] -> [Level] -> State TranslateState (EnvEntry, [Level])
