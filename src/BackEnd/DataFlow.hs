@@ -54,7 +54,7 @@ testCSEFile file = do -- only with main
     let (stm, s) = runState (translate ast') newTranslateState;
         (qstm, qs') = runState (quadStm stm) s
         (stms, s') = runState (transform qstm) qs'
-        (cseout, cseState) = runState (cse stms s') newAState 
+        (cseout, cseState) = runState (cse stms s') newAState
         transState = trans_ cseState -- get the translate state out
     return cseout
 
@@ -67,9 +67,9 @@ testCopyPropFile file = do -- only with main
         copy = evalState (copyprop stms) newReachState
     return copy
 
-quadInterface stm = do 
+quadInterface stm = do
     qstm <- quadStm stm
-    stms <- transform qstm 
+    stms <- transform qstm
     return stms
 
 -- constProp :: ([Stm],ReachingDef) -> ([Stm],ReachingDef)
@@ -84,6 +84,22 @@ quadInterface stm = do
 --       return $ genReachingDef flow
 -- constProp stmAndTable = stmAndTable
 
+-- -- copy propagation --
+-- copyprop :: [Stm] -> State ReachState [Stm]
+-- copyprop stms = do
+--     analyzeReachGK stms
+--     copyPropAll
+--     state <- get
+--     return $ unReach $ wrappedFlow state
+
+-- constProp :: [Stm] -> State ReachState [Stm]
+-- constProp stms = do
+--   analyzeReachGK stms
+--   state <- get
+--   let newStm = constProp'  (rd state) 0 []
+--   put $ state {}
+
+
 constProp' :: [Stm] -> ReachingDef -> Int -> [Stm] -> [Stm]
 constProp' stm table i newStm
   | i == length stm = newStm
@@ -95,6 +111,11 @@ constProp' stm table i newStm
         --number of definition of t with const c
         numDefs = map (findConst stm  0 0) used --[(num, c)]
         new = replaceStm s used numDefs
+--
+-- constPropAll :: State ReachState [()]
+-- constPropAll = do
+--   state <- get
+
 
 replaceStm :: Stm -> [Temp.Temp] -> [(Int, Int)] -> Stm
 replaceStm stm [] [] = stm
@@ -124,7 +145,7 @@ replaceExp _ _ e = e
 
 
 findConst :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
-findConst [] num c t = (num, c) --number of definition of t with the latest one at pos with const c
+findConst [] num c t = (num, c) --number of definition of t with the latest one with const c
 findConst ((MOV (TEMP t1) (CONSTI i)):ds) num c t
   | t1 == t = findConst ds (num + 1) i t
   | otherwise = findConst ds num c t
@@ -351,7 +372,7 @@ testReachGK stms = do
 
 containsExpression :: Exp -> State AState [Exp]
 containsExpression target = do
-    state <- get 
+    state <- get
     return $ nub $ concatMap (contains target) (wrappedFlow_ state)
 
 containsMem :: [AFlow] -> [Exp]
@@ -493,7 +514,7 @@ reachingOneExpression (defid, (in_, out_))
         genOneReachable _ = fail "EXPRESSION CONTAINS NOT ALLOWED GENS"
 
 -- COMMON-SUBEXPRESSION ELIMINATION
--- NEED TO CARRY TRANSLATE STATE REGISTER INFORMATION 
+-- NEED TO CARRY TRANSLATE STATE REGISTER INFORMATION
 -- REWRITE the translate state information after use ***
 -- pre: apply this on each frag **separately**
 cse :: [Stm] -> TranslateState -> State AState [Stm]
@@ -518,8 +539,8 @@ addreTree_ flow = do
     updateAFlow $ flow {reTree_ = [tree_ flow]}
 
 cseOne :: Int -> State AState ()
-cseOne targetNum = do 
-    state <- get 
+cseOne targetNum = do
+    state <- get
     let flows = wrappedFlow_ state
         target = flows !! targetNum
         rhs = getRHS (tree_ target)
@@ -530,13 +551,13 @@ cseOne targetNum = do
         -- find the previously defined exp
         let exprToChange = fromJust rhs
             translateState = trans_ state
-            (temp, translateState') = runState (Translate.newTemp) translateState 
+            (temp, translateState') = runState (Translate.newTemp) translateState
         exprSources <- findExpr exprToChange targetNum
         mapM (transformSourceExpr temp) exprSources
         transformDstExpr temp target
         return ()
 
---                     Temp 
+--                     Temp
 transformDstExpr :: Int -> AFlow -> State AState ()
 transformDstExpr temp (A tree gen kill defid ((MOV a b):res)) = do
     let newDst = (A tree gen kill defid ((MOV a (TEMP temp)):res))
@@ -548,7 +569,7 @@ transformSourceExpr temp (A tree gen kill defid ((MOV a b):res)) = do
     updateAFlow newSource
 
 updateAFlow :: AFlow -> State AState ()
-updateAFlow flow = do        
+updateAFlow flow = do
     state <- get
     let flows = wrappedFlow_ state
         defid = defid_ flow
@@ -566,7 +587,7 @@ findExpr expr cur = do
     else do
         let allpred = fromJust $ Data.List.lookup cur (pt_ state)
         allSource <- mapM (findExpr expr) allpred
-        if allSource == [] then 
+        if allSource == [] then
             fail "SHOULD HAVE AT LEAST ONE SOURCE"
         else
             return $ concat allSource
@@ -574,7 +595,7 @@ findExpr expr cur = do
 getRHS :: Stm -> Maybe Exp
 getRHS (MOV _ b@(BINEXP _ _ _)) = Just b
 getRHS _ = Nothing
-        
+
 unA :: [AFlow] -> [Stm]
 unA flows = concatMap reTree_ flows
 
@@ -607,8 +628,8 @@ applyCopyProp flow = do
     let (MOV (TEMP a) (TEMP b)) = tree flow
         idnum = defid flow
     rf <- reachedFLow idnum
-    outs <- mapM (tryCopyProp a) rf 
-    if (filter (not) outs) /= [] then 
+    outs <- mapM (tryCopyProp a) rf
+    if (filter (not) outs) /= [] then
         return () -- cannot remove this mov
     else do
         bool <- updateReachFlow $ flow {reTree = []}
@@ -642,7 +663,7 @@ tryCopyProp temp id_ = do
                 state <- get
                 let idflow = (wrappedFlow state) !! id_
                 case tree idflow of
-                    (MOV (TEMP t) (TEMP target)) -> if t == temp then 
+                    (MOV (TEMP t) (TEMP target)) -> if t == temp then
                                                         return target
                                                     else
                                                         return (-1)
@@ -676,16 +697,16 @@ subsTemp from to flowid = do
             let newa = if a == (TEMP from) then (TEMP to) else a
                 newb = if b == (TEMP from) then (TEMP to) else b
             updateReachFlow $ flow {reTree = [(CJUMP rop newa newb t f)]}
-        (EXP (CALL f exps)) -> updateReachFlow $ flow {reTree = [(EXP (CALL f 
+        (EXP (CALL f exps)) -> updateReachFlow $ flow {reTree = [(EXP (CALL f
                                 [ if(x == (TEMP from)) then (TEMP to) else x | x <- exps]))]}
-        (MOV a (CALL f exps)) -> updateReachFlow $ flow {reTree = [(MOV a (CALL f 
+        (MOV a (CALL f exps)) -> updateReachFlow $ flow {reTree = [(MOV a (CALL f
                                 [ if(x == (TEMP from)) then (TEMP to) else x | x <- exps]))]}
 
 reachedFLow :: Int -> State ReachState [Int]
 reachedFLow r = do
     state <- get
     let rd_ = rd state
-    return [id_ | (id_, (in_, out_)) <- rd_, elem r in_] 
+    return [id_ | (id_, (in_, out_)) <- rd_, elem r in_]
 
 addreTree :: ReachFlow -> State ReachState ()
 addreTree flow = do
@@ -696,7 +717,7 @@ unReach :: [ReachFlow] -> [Stm]
 unReach flows = concatMap reTree flows
 
 updateReachFlow :: ReachFlow -> State ReachState Bool
-updateReachFlow flow = do        
+updateReachFlow flow = do
     state <- get
     let flows = wrappedFlow state
         defid_ = defid flow
@@ -707,6 +728,6 @@ updateReachFlow flow = do
 copyPropStms = [(MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI 4))),
                  (MOV (TEMP 16) (TEMP 13)), (MOV (MEM (TEMP 16) 4) (CONSTI 42))]
 
-testCP stms = do 
+testCP stms = do
     let out = evalState (copyprop stms) newReachState
     putStrLn $ show out
