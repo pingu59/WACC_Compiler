@@ -226,6 +226,14 @@ getTempDefts k = do
         Just a -> return a
         Nothing -> return []
 
+-- Analyze and put everything in the state
+analyzeReachGK :: [Stm] -> State ReachState ()
+analyzeReachGK stms = do
+    let (gk, gkstate) = runState (wrapReachGK stms) newReachState
+        (rdef, pt_) = genReachingDef gk
+    put $ gkstate {wrappedFlow = gk, pt = pt_, rd = rdef} -- put everything in the state
+    return ()
+
 -- wrap gk data structure for both types of analysis
 wrapReachGK :: [Stm] -> State ReachState [ReachFlow]
 wrapReachGK stms = do
@@ -249,7 +257,7 @@ addOneReachDef m@(MOV (TEMP a) b) = movReachGK m a
 addOneReachDef e = reachExp e
 
 wrapOneReachGk :: ReachFlow -> State ReachState ReachFlow
-wrapOneReachGk m@(M (MOV (TEMP a) _) gen _ _) = getReachKill m a gen
+wrapOneReachGk m@(M (MOV (TEMP a) _) gen _ _ _) = getReachKill m a gen
 wrapOneReachGk x = return x
 
 genReachPred :: [ReachFlow] -> PredTable
@@ -257,25 +265,25 @@ genReachPred flow = genReachPred' flow flow []
 
 genReachPred' :: [ReachFlow] -> [ReachFlow] -> PredTable -> PredTable
 genReachPred' src [] acc = acc
-genReachPred' src ((E (LABEL l) defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (searchLable l))])
+genReachPred' src ((E (LABEL l) defid _) : rest) acc = genReachPred' src rest (acc ++ [(defid, (searchLable l))])
     where
         searchLable :: String -> [Int]
         searchLable l = (searchLable' src l []) ++ pred
         searchLable' :: [ReachFlow] -> String -> [Int] -> [Int]
         searchLable' [] _ acc = acc
-        searchLable' ((E (JUMP _ lables) defid) : rest) l acc
+        searchLable' ((E (JUMP _ lables) defid _) : rest) l acc
             | elem l lables = searchLable' rest l (defid:acc)
-        searchLable' ((E (CJUMP _ _ _ t f) defid) : rest) l acc
+        searchLable' ((E (CJUMP _ _ _ t f) defid _) : rest) l acc
             | l == t || l == f = searchLable' rest l (defid:acc)
         searchLable' (_:rest) l acc = searchLable' rest l acc
         pred = if (defid /= 0)&&(isNotjump (src!! (defid - 1)))
                then (prevId defid) else []
-        isNotjump (E (JUMP _ _) _) = False
-        isNotjump (E (CJUMP _ _ _ _ _) _) = False
+        isNotjump (E (JUMP _ _) _ _) = False
+        isNotjump (E (CJUMP _ _ _ _ _) _ _) = False
         isNotjump _ = True
 
-genReachPred' src ((M _ _ _ defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
-genReachPred' src ((E _ defid) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
+genReachPred' src ((M _ _ _ defid _) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
+genReachPred' src ((E _ defid _) : rest) acc = genReachPred' src rest (acc ++ [(defid, (prevId defid))])
 
 prevId 0 = []
 prevId x = [x - 1]
@@ -283,10 +291,10 @@ prevId x = [x - 1]
 initReachingDef :: [ReachFlow] -> (ReachingGK , ReachingDef)
 initReachingDef flows = (map takeReachGK flows, map initReach flows)
     where
-        takeReachGK (M tree g k defid) = (defid, (g, k))
-        takeReachGK (E tree defid) = (defid, ([], []))
-        initReach (M _ _ _ defid) = (defid, ([], []))
-        initReach (E tree defid) = (defid, ([], []))
+        takeReachGK (M tree g k defid _) = (defid, (g, k))
+        takeReachGK (E tree defid _) = (defid, ([], []))
+        initReach (M _ _ _ defid _) = (defid, ([], []))
+        initReach (E tree defid _) = (defid, ([], []))
 
 iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> ReachingDef
 iterateReachingDef gk this pred
@@ -492,11 +500,11 @@ cse stms transtate = do
 cseAll :: State AState [()]
 cseAll = do
     state <- get
-    mapM (addreTree) (wrappedFlow_ state)
+    mapM (addreTree_) (wrappedFlow_ state)
     mapM cseOne [0..(length (wrappedFlow_ state) - 1)]
 
-addreTree :: AFlow -> State AState ()
-addreTree flow = do
+addreTree_ :: AFlow -> State AState ()
+addreTree_ flow = do
     -- add the tree_ to reTree_, put it back to the state and return
     updateAFlow $ flow {reTree_ = [tree_ flow]}
 
@@ -562,11 +570,27 @@ unA :: [AFlow] -> [Stm]
 unA flows = concatMap reTree_ flows
 
 -- copy propagation --
--- copyprop :: [Stm] -> TranslateState -> State ReachState [Stm]
--- copyprop = do
---     let (gk, gkstate) = runState (wrapReachGK stms) newReachState
---         (rdef, pt_) = genReachingDef gk
---     put $ gkstate {trans = transtate, pt = pt_} -- put everything in the state
---     copyPropAll
---     state <- get
---     return $ unReach $ wrappedFlow state
+copyprop :: [Stm] -> State ReachState [Stm]
+copyprop stms = do
+    analyzeReachGK stms
+    return []
+    copyPropAll
+    state <- get
+    return $ unReach $ wrappedFlow state
+
+copyPropAll :: State ReachState [()]
+copyPropAll = do
+    state <- get
+    mapM (addreTree) (wrappedFlow state)
+    mapM copyPropOne [0..(length (wrappedFlow state) - 1)]
+
+copyPropOne :: Int -> State ReachState ()
+copyPropOne = undefined
+
+addreTree :: ReachFlow -> State ReachState ()
+addreTree = undefined
+
+unReach :: [ReachFlow] -> [Stm]
+unReach flows = concatMap reTree flows
+
+

@@ -14,30 +14,34 @@ type ReachingExpr = [(Int, [Exp])]
 data ReachFlow = M { tree :: Stm,
                     gen :: [Int],
                     kill :: [Int],
-                    defid :: Int}
+                    defid :: Int,
+                    reTree :: [Stm]}
                 | E {tree :: Stm,
-                     defid :: Int} deriving (Show, Eq)
+                     defid :: Int,
+                     reTree :: [Stm]} deriving (Show, Eq)
 
 data ReachState = ReachState { idCount :: Int,
                                tempMap :: HashMap.Map Int [Int],
                                pt :: PredTable,
-                               wrappedFlow :: [ReachFlow]}
+                               wrappedFlow :: [ReachFlow],
+                               rd :: ReachingDef}
 
-newReachState = ReachState {idCount = 0, tempMap = HashMap.empty, pt = [], wrappedFlow = []}
+newReachState = ReachState {idCount = 0, tempMap = HashMap.empty, pt = [], wrappedFlow = [],
+                            rd = []}
 
 reachMov :: Stm -> State ReachState (Int, ReachFlow)
 reachMov t = do 
     oldState <- get
     let count = idCount oldState
     put $ oldState {idCount = count + 1}
-    return (count, M {defid = count, tree = t, gen = [count], kill = []})
+    return (count, M {defid = count, tree = t, gen = [count], kill = [], reTree = []})
 
 reachExp :: Stm -> State ReachState ReachFlow
 reachExp e = do
     oldState <- get
     let count = idCount oldState
     put $ oldState {idCount = count + 1}
-    return $ E {tree = e, defid = count}
+    return $ E {tree = e, defid = count, reTree = []}
 
 data AFlow = A {    tree_ :: Stm,
                     gen_ :: [Exp],
