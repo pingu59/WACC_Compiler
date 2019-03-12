@@ -44,9 +44,9 @@ testQuadfile file = do
         userFrags = map (\(PROC stm _) -> stm) (procFrags s)
         (qstm, qs') = runState (quadStm stm) s
         (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
-        (stms, s') = runState (transform qstm) qs''
-        (userFrags', _) = runState (mapM transform qfrag) s'
-    return $ (stms ++ userFrags)
+        -- (stms, s') = runState (transform qstm) qs''
+        -- (userFrags', _) = runState (mapM transform qfrag) s'
+    return $ qstm --(stms ++ userFrags)
 
 testCSEFile file = do -- only with main
     ast <- parseFile file
