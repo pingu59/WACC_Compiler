@@ -74,7 +74,7 @@ testConstProp file = do
       (qstm, qs') = runState (quadStm stm) s
       (stms, s') = runState (transform qstm) qs'
       constP = evalState (constProp stms) newReachState
-  return constP
+  return stms
 
 quadInterface stm = do
     qstm <- quadStm stm
@@ -158,8 +158,13 @@ replaceStm' stm@(MOV e (TEMP t1)) t c
   | otherwise = stm
 replaceStm' (CJUMP cond e1 e2 l1 l2) t c =
   CJUMP cond (replaceExp t c e1) (replaceExp t c e2) l1 l2
-replaceStm' (EXP (CALL f exps)) t c = EXP (CALL f (map (replaceExp t c) exps))
+replaceStm' s@(EXP (CALL f@(NAME n) exps)) t c
+  | cannotReplace n = s
+  | otherwise = EXP (CALL f (map (replaceExp t c) exps))
 replaceStm' stm _ _ = stm
+
+cannotReplace :: Temp.Label -> Bool
+cannotReplace n = elem n ["#p_print_int"]
 
 replaceExp :: Temp.Temp -> Int -> Exp -> Exp
 replaceExp t c e@(TEMP t1)

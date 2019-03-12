@@ -24,7 +24,8 @@ instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[As
 instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
-  let copyPropStms = evalState (copyprop stms) newReachState
+  let constPropStms = evalState (constProp stms) newReachState
+      copyPropStms = evalState (copyprop constPropStms) newReachState
   state <- get
   let (cseout, cseState) = runState (cse copyPropStms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
@@ -38,7 +39,7 @@ instrGen ast = do
   else do
     let copyPropStms' = evalState (copyprop cseout) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess copyPropStms) --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess copyPropStms') --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
