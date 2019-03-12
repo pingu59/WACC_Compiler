@@ -204,12 +204,13 @@ doStm :: Stm -> State TranslateState Stm
 {- new -}
 doStm (JUMP (ESEQ s e) l) = doStm (SEQ s (JUMP e l))
 
+-- ASSUME ALL COMMUTE ??  COMMUTE FUNCTION BEHAVIOUR WEIRD
+doStm (CJUMP rop (ESEQ s1 e1) (ESEQ s2 e2) t f) = do
+  doStm $ SEQ s1 (SEQ s2 (CJUMP rop e1 e2 t f))
+
 doStm (CJUMP rop (ESEQ s e1) e2 t f) = doStm (SEQ s (CJUMP rop e1 e2 t f))
 
 doStm (CJUMP rop e1 (ESEQ s e2) t f) = do
-  if(commute e1 s) then
-    doStm (SEQ s (CJUMP rop e1 e2 t f))
-  else do
     temp <- newTemp
     doStm (SEQ (MOV (TEMP temp) e1) (CJUMP rop (TEMP temp) e2 t f))
 
