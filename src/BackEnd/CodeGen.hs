@@ -13,6 +13,7 @@ import BackEnd.Assem as Assem
 import BackEnd.DataFlow as DataFlow
 import BackEnd.GenKill as GenKill
 import FrontEnd.SemanticAnalyzer
+import BackEnd.DeadCode
 
 
 codeGen :: ProgramF () -> IO String
@@ -25,8 +26,9 @@ instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
   let copyPropstms = evalState (copyprop stms) newReachState
+      cleanDead = evalState (eliminateDeadCode copyPropstms) newLState
   state <- get
-  let (cseout, cseState) = runState (cse copyPropstms state) GenKill.newAState
+  let (cseout, cseState) = runState (cse cleanDead state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
   if(cseout == copyPropstms) then do
@@ -53,7 +55,7 @@ userFrags :: State Translate.TranslateState [[Assem.Instr]]
 userFrags = do
   state <- get
   let userFrags' = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags state)
-  mapM (\f -> transform f >>= \f' -> Munch.munchmany f') userFrags'
+  mapM (\f -> quadInterface f >>= \f' -> Munch.munchmany f') userFrags'
 
 builtInFrags :: State Translate.TranslateState [[Assem.Instr]]
 builtInFrags = do

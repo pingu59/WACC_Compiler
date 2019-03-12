@@ -328,7 +328,7 @@ initReachingDef flows = (map takeReachGK flows, map initReach flows)
 
 iterateReachingDef :: ReachingGK -> ReachingDef -> PredTable -> Int -> ReachingDef
 iterateReachingDef gk this pred times
-  | this == next || times > (length pred) * (length pred) = this  -- SETTING A HARD LIMIT ON THE NUMBER OF ITERATIONS
+  | this == next || times > (length pred) = this  -- SETTING A HARD LIMIT ON THE NUMBER OF ITERATIONS
   | otherwise = iterateReachingDef gk next pred (times + 1)
   where
     next = iterateOnce this []
@@ -411,17 +411,18 @@ wrapAGK stms = do
     flows' <- mapM wrapOneAGK flows
     state' <- get
     put $ state' {wrappedFlow_ = flows'}
-
     return flows'
 
 -- wrap stm with AFlow but WITHOUT gen/kill
 addOneAGK :: Stm -> State AState AFlow
 addOneAGK s = newA s
 
-killMem :: AFlow -> State AState AFlow
-killMem e = do
+killMem :: AFlow -> [Exp] -> State AState AFlow
+killMem e exps = do
     state <- get
-    return $ e {kill_ = memFlow_ state}
+    return $ e {kill_ = filter notInList (memFlow_ state) }
+    where
+        notInList (MEM a _) = not $ elem a exps
 
 addExpr :: [Exp] -> State AState ()
 addExpr exprs = do
@@ -430,14 +431,15 @@ addExpr exprs = do
 
 -- Add Gen Kills
 wrapOneAGK :: AFlow -> State AState AFlow
-wrapOneAGK a@(A (EXP e@(CALL _ _)) _ _ _ _) = addExpr [e] >> killMem a
+wrapOneAGK a@(A (EXP e@(CALL _ exps)) _ _ _ _) = addExpr [e] >> killMem a exps
 
-wrapOneAGK a@(A (MOV (MEM _ _) _ ) _ _ _ _) = killMem a
+wrapOneAGK a@(A (MOV (MEM m _) _ ) _ _ _ _) = killMem a [m]
 --Pre : t is a temp
-wrapOneAGK a@(A (MOV t (CALL _ _)) _ _ _ _) = do
+wrapOneAGK a@(A (MOV t (CALL _ exps)) _ _ _ _) = do
     state <- get
     cexpr <- containsExpression t
-    return $ a {kill_ = union (memFlow_ state) cexpr}
+    a' <- killMem a exps
+    return $ a' {kill_ = union (kill_ a') cexpr}
 
 wrapOneAGK a@(A (MOV t b) _ _ _ _) = do
     cexpr <- containsExpression t
@@ -737,5 +739,7 @@ putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV (MEM m size) c) : rest
     | m == (TEMP t) && t /= 13 = ((MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest)
 putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV c (MEM m size)) : rest)
     | m == (TEMP t) && t /= 13 = ((MOV c (MEM (BINEXP bop b1 b2) size)) : putBackMemAccess rest)
+putBackMemAccess ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
+    | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
 putBackMemAccess (x:xs) = x : (putBackMemAccess xs)
 putBackMemAccess [] = []

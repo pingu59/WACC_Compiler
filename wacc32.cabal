@@ -42,6 +42,7 @@ library
       BackEnd.Temp
       BackEnd.DataFlow
       BackEnd.GenKill
+      BackEnd.DeadCode
       BackEnd.Translate
       FrontEnd.AST
       FrontEnd.Lexer
