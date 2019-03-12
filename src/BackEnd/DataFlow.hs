@@ -44,9 +44,9 @@ testQuadfile file = do
         userFrags = map (\(PROC stm _) -> stm) (procFrags s)
         (qstm, qs') = runState (quadStm stm) s
         (qfrag, qs'') = runState (mapM quadStm userFrags) qs'
-        (stms, s') = runState (transform qstm) qs''
-        (userFrags', _) = runState (mapM transform qfrag) s'
-    return $ (stms ++ userFrags)
+        -- (stms, s') = runState (transform qstm) qs''
+        -- (userFrags', _) = runState (mapM transform qfrag) s'
+    return $ qstm --(stms ++ userFrags)
 
 testCSEFile file = do -- only with main
     ast <- parseFile file
@@ -169,15 +169,15 @@ twoExpr :: Exp -> Exp -> (Exp -> Exp -> a) -> State TranslateState a
 twoExpr e1 e2 a = do
     e1' <- quadExp e1
     e2' <- quadExp e2
-    if (isBM e1') then do
+    if (isBM e1) then do
         eseq1 <- eseq
-        if (isBM e2') then do
+        if (isBM e2) then do
             eseq2 <- eseq
             return $ a (eseq1 e1') (eseq2 e2')
         else
             return $ a (eseq1 e1') e2'
     else do
-        if (isBM e2') then do
+        if (isBM e2) then do
             eseq2 <- eseq
             return $ a e1' (eseq2 e2')
         else
@@ -197,7 +197,7 @@ quadStm (SEQ s1 s2) = do
 quadStm (MOV e1 e2) = do
   e1' <- quadExp e1
   e2' <- quadExp e2
-  if(isBM e1' && isBM e2') then do
+  if(isBM e1 && isBM e2) then do
     eseq' <- eseq
     return $ MOV e1' (eseq' e2')
   else
@@ -736,5 +736,7 @@ testCP stms = do
 putBackMemAccess :: [Stm] -> [Stm]
 putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV (MEM m size) c) : rest)
     | m == (TEMP t) && t /= 13 = ((MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest)
+putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV c (MEM m size)) : rest)
+    | m == (TEMP t) && t /= 13 = ((MOV c (MEM (BINEXP bop b1 b2) size)) : putBackMemAccess rest)
 putBackMemAccess (x:xs) = x : (putBackMemAccess xs)
 putBackMemAccess [] = []
