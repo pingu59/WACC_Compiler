@@ -67,6 +67,15 @@ testCopyPropFile file = do -- only with main
         copy = evalState (copyprop stms) newReachState
     return copy
 
+testConstProp file = do
+  ast <- parseFile file
+  ast' <- analyzeAST ast
+  let (stm, s) = runState (translate ast') newTranslateState;
+      (qstm, qs') = runState (quadStm stm) s
+      (stms, s') = runState (transform qstm) qs'
+      constP = evalState (constProp stms) newReachState
+  return constP
+
 quadInterface stm = do
     qstm <- quadStm stm
     stms <- transform qstm
@@ -94,25 +103,44 @@ constPropOne index = do
   state <- get
   let allFlow = wrappedFlow state
       aFlow = allFlow !! index
-      usedTemp = getRegStm (tree aFlow) -- registers used in this stm
+      stm = tree aFlow
+      usedTemp = getRegStm stm -- registers used in this stm
       --for usedTemp
       --find number of definition of t with const c in the inDef list
       --if there is only one, replace t with c
-  mapM (findConst index) usedTemp
+  bools <- mapM (findConst index) usedTemp
+  newState <- get
+  let newFlow = (wrappedFlow newState) !! index
+      foldedStm = foldStm (tree newFlow)
+  bool <- updateReachFlow $ newFlow {tree = foldedStm}
   return ()
+
+foldStm :: Stm -> Stm
+foldStm (MOV t e) = MOV t (foldExp e)
+foldStm s = s
+
+foldExp :: Exp -> Exp
+foldExp (BINEXP PLUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 + i2)
+foldExp (BINEXP MINUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 - i2)
+foldExp (BINEXP MUL (CONSTI i1) (CONSTI i2)) = CONSTI (i1 * i2)
+foldExp (BINEXP DIV (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `div` i2)
+foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `mod` i2)
+foldExp e = e
 
 findConst :: Int -> Temp -> State ReachState Bool
 findConst index t = do
   state <- get
-  let inDef =  fst $ snd ((rd state) !! index)
-      stms = map tree (map (wrappedFlow state !!) inDef)
+  let thisStm = (rd state) !! index
+      inDef =  fst $ snd ((rd state) !! index)
+      stms = map tree (map (wrappedFlow state !!) inDef) -- stms that can reach  this stm
   case (findConst' stms 0 0 t) of
     (1, c) -> do
       let flows = wrappedFlow state
           aFlow = flows !! index
           newStm = replaceStm' (tree aFlow) t c in
-       updateReachFlow $ aFlow {tree = newStm}
+       updateReachFlow $ aFlow {tree = newStm} --registers has been replaced with const
     otherwise -> return False
+
 
 findConst' :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
 findConst' [] num c t = (num, c) --number of definition of t with the latest one with const c
@@ -728,6 +756,8 @@ constPropStms1 = [(MOV (TEMP 10) (CONSTI 1)),
 constPropStms2 = [(MOV (TEMP 10) (CONSTI 1)),
                 (MOV (TEMP 12) (TEMP 10)), (MOV (TEMP 9) (CALL (NAME "f") [(TEMP 12), (TEMP 12)])),
                 (MOV (MEM (TEMP 12) 4) (TEMP 10))]
+
+constPropStms3 = [(MOV (TEMP 15) (BINEXP PLUS (CONSTI 1) (CONSTI 2))), (MOV (TEMP 16) (BINEXP PLUS (TEMP 15) (CONSTI 2)))]
 
 testCP stms = do
     let out = evalState (constProp stms) newReachState
