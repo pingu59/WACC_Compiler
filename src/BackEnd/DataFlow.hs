@@ -67,72 +67,104 @@ testCopyPropFile file = do -- only with main
         copy = evalState (copyprop stms) newReachState
     return copy
 
+testConstProp file = do
+  ast <- parseFile file
+  ast' <- analyzeAST ast
+  let (stm, s) = runState (translate ast') newTranslateState;
+      (qstm, qs') = runState (quadStm stm) s
+      (stms, s') = runState (transform qstm) qs'
+      constP = evalState (constProp stms) newReachState
+  return stms
+
 quadInterface stm = do
     qstm <- quadStm stm
     stms <- transform qstm
     return stms
 
--- constProp :: ([Stm],ReachingDef) -> ([Stm],ReachingDef)
--- {-if n(move const to temp) reches f with no def of n in between-}
--- --stm[n] uses t
--- --in[n] = [n1, n2, n3...] has only one def of t then replace t in stm[n] with const
--- constProp (stms, table) = (newStm, newTable)
---   where
---     newStm = constProp' stms table 0 []
---     newTable = do
---       flow <- wrapReachGK newStm
---       return $ genReachingDef flow
--- constProp stmAndTable = stmAndTable
 
--- -- copy propagation --
--- copyprop :: [Stm] -> State ReachState [Stm]
--- copyprop stms = do
---     analyzeReachGK stms
---     copyPropAll
---     state <- get
---     return $ unReach $ wrappedFlow state
+-- constant propagation
+constProp :: [Stm] -> State ReachState [Stm]
+constProp stms = do
+  analyzeReachGK stms
+  constPropAll
+  state <- get
+  return $ constNewStms $ wrappedFlow state
 
--- constProp :: [Stm] -> State ReachState [Stm]
--- constProp stms = do
---   analyzeReachGK stms
---   state <- get
---   let newStm = constProp'  (rd state) 0 []
---   put $ state {}
+constNewStms :: [ReachFlow] -> [Stm]
+constNewStms flows = map tree flows
+
+constPropAll :: State ReachState [()]
+constPropAll = do
+  state <- get
+  mapM constPropOne [0..(length (wrappedFlow state) - 1)]
+
+constPropOne :: Int -> State ReachState ()
+constPropOne index = do
+  state <- get
+  let allFlow = wrappedFlow state
+      aFlow = allFlow !! index
+      stm = tree aFlow
+      usedTemp = getRegStm stm -- registers used in this stm
+      --for usedTemp
+      --find number of definition of t with const c in the inDef list
+      --if there is only one, replace t with c
+  bools <- mapM (findConst index) usedTemp
+  newState <- get
+  let newFlow = (wrappedFlow newState) !! index
+      foldedStm = foldStm (tree newFlow)
+  bool <- updateReachFlow $ newFlow {tree = foldedStm}
+  return ()
+
+foldStm :: Stm -> Stm
+foldStm (MOV t e) = MOV t (foldExp e)
+foldStm s = s
+
+foldExp :: Exp -> Exp
+foldExp (BINEXP PLUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 + i2)
+foldExp (BINEXP MINUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 - i2)
+foldExp (BINEXP MUL (CONSTI i1) (CONSTI i2)) = CONSTI (i1 * i2)
+foldExp (BINEXP DIV (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `div` i2)
+foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `mod` i2)
+foldExp e = e
+
+findConst :: Int -> Temp -> State ReachState Bool
+findConst index t = do
+  state <- get
+  let thisStm = (rd state) !! index
+      inDef =  fst $ snd ((rd state) !! index)
+      stms = map tree (map (wrappedFlow state !!) inDef) -- stms that can reach  this stm
+  case (findConst' stms 0 0 t) of
+    (1, c) -> do
+      let flows = wrappedFlow state
+          aFlow = flows !! index
+          newStm = replaceStm' (tree aFlow) t c in
+       updateReachFlow $ aFlow {tree = newStm} --registers has been replaced with const
+    otherwise -> return False
 
 
-constProp' :: [Stm] -> ReachingDef -> Int -> [Stm] -> [Stm]
-constProp' stm table i newStm
-  | i == length stm = newStm
-  | otherwise = constProp' stm table (i + 1) (newStm ++ [new])
-      where
-        s = stm !! i
-        used = getRegStm s --list of registers used in s
-        inDef = fst $ snd (table !! i) --register definition reaches s
-        --number of definition of t with const c
-        numDefs = map (findConst stm  0 0) used --[(num, c)]
-        new = replaceStm s used numDefs
---
--- constPropAll :: State ReachState [()]
--- constPropAll = do
---   state <- get
+findConst' :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
+findConst' [] num c t = (num, c) --number of definition of t with the latest one with const c
+findConst' ((MOV (TEMP t1) (CONSTI i)):ds) num c t
+  | t1 == t = findConst' ds (num + 1) i t
+  | otherwise = findConst' ds num c t
+findConst' (d:ds) num c t = findConst' ds num c t
 
-
-replaceStm :: Stm -> [Temp.Temp] -> [(Int, Int)] -> Stm
-replaceStm stm [] [] = stm
-replaceStm stm (t:ts) ((1, c):rest) = replaceStm stm' ts rest
-    where
-      stm' = replaceStm' stm t c
-replaceStm stm _ _ = stm
 
 replaceStm' :: Stm -> Temp.Temp -> Int -> Stm
 replaceStm' (MOV (TEMP t1) e) t c = MOV (TEMP t1) (replaceExp t c e)
+replaceStm' (MOV (MEM e1 i) e2) t c = MOV (MEM (replaceExp t c e1) i) (replaceExp t c e2)
 replaceStm' stm@(MOV e (TEMP t1)) t c
   | t1 == t = MOV e (CONSTI c)
   | otherwise = stm
 replaceStm' (CJUMP cond e1 e2 l1 l2) t c =
   CJUMP cond (replaceExp t c e1) (replaceExp t c e2) l1 l2
-replaceStm' (EXP (CALL f exps)) t c = EXP (CALL f (map (replaceExp t c) exps))
+replaceStm' s@(EXP (CALL f@(NAME n) exps)) t c
+  | cannotReplace n = s
+  | otherwise = EXP (CALL f (map (replaceExp t c) exps))
 replaceStm' stm _ _ = stm
+
+cannotReplace :: Temp.Label -> Bool
+cannotReplace n = elem n ["#p_print_int"]
 
 replaceExp :: Temp.Temp -> Int -> Exp -> Exp
 replaceExp t c e@(TEMP t1)
@@ -143,28 +175,23 @@ replaceExp t c (MEM e i) = MEM (replaceExp t c e) i
 replaceExp t c (CALL f exps) = CALL f (map (replaceExp t c) exps)
 replaceExp _ _ e = e
 
-
-findConst :: [Stm] -> Int -> Int -> Temp.Temp -> (Int, Int)
-findConst [] num c t = (num, c) --number of definition of t with the latest one with const c
-findConst ((MOV (TEMP t1) (CONSTI i)):ds) num c t
-  | t1 == t = findConst ds (num + 1) i t
-  | otherwise = findConst ds num c t
-findConst (d:ds) num c t = findConst ds num c t
-
 --get the list of temps used in one statement
 getRegStm :: Stm -> [Temp.Temp]
 getRegStm (MOV (TEMP t) e) = getRegExp e
-getRegStm (MOV _ (TEMP t)) = [t]
-getRegStm (CJUMP _ e1 e2 _ _) = concat $ map getRegExp [e1,e2]
-getRegStm (EXP (CALL _ exps)) = concat $ map getRegExp exps
+getRegStm (MOV e1 e2 ) = concatMap getRegExp [e1,e2]
+getRegStm (CJUMP _ e1 e2 _ _) = concatMap getRegExp [e1,e2]
+getRegStm (EXP (CALL _ exps)) = concatMap getRegExp exps
 getRegStm _ = []
 
 getRegExp :: Exp -> [Temp.Temp]
 getRegExp (TEMP t) = [t]
-getRegExp (BINEXP _ e1 e2) = concat $ map getRegExp [e1,e2]
+getRegExp (BINEXP bop e1 e2) = concatMap getRegExp [e1,e2]
 getRegExp (MEM e _) = getRegExp e
-getRegExp (CALL _ exps) = concat $ map getRegExp exps
-getRegEXp _ = []
+getRegExp (CALL _ exps) = concatMap getRegExp exps
+getRegExp _ = []
+
+
+
 
 eseq :: State TranslateState (Exp -> Exp)
 eseq = do
@@ -730,8 +757,17 @@ updateReachFlow flow = do
 copyPropStms = [(MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI 4))),
                  (MOV (TEMP 16) (TEMP 13)), (MOV (MEM (TEMP 16) 4) (CONSTI 42))]
 
+constPropStms1 = [(MOV (TEMP 10) (CONSTI 1)),
+                (MOV (TEMP 12) (CONSTI 2)), (MOV (TEMP 9) (BINEXP MINUS (TEMP 10) (TEMP 12)))]
+
+constPropStms2 = [(MOV (TEMP 10) (CONSTI 1)),
+                (MOV (TEMP 12) (TEMP 10)), (MOV (TEMP 9) (CALL (NAME "f") [(TEMP 12), (TEMP 12)])),
+                (MOV (MEM (TEMP 12) 4) (TEMP 10))]
+
+constPropStms3 = [(MOV (TEMP 15) (BINEXP PLUS (CONSTI 1) (CONSTI 2))), (MOV (TEMP 16) (BINEXP PLUS (TEMP 15) (CONSTI 2)))]
+
 testCP stms = do
-    let out = evalState (copyprop stms) newReachState
+    let out = evalState (constProp stms) newReachState
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
