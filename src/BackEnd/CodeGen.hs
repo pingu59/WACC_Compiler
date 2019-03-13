@@ -25,12 +25,12 @@ instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[As
 instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
-  let cleanDead = evalState (eliminateDeadCode stms) newLState
-      constPropStms = evalState (constProp cleanDead) newReachState
-      copyPropstms = evalState (copyprop constPropStms) newReachState
-      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
+  let --cleanDead = evalState (eliminateDeadCode stms) newLState
+      --constPropStms = evalState (constProp stms) newReachState
+      copyPropstms = evalState (copyprop stms) newReachState
+      --cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
   state <- get
-  let (cseout, cseState) = runState (cse cleanDead2 state) GenKill.newAState
+  let (cseout, cseState) = runState (cse copyPropstms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
   if(cseout == copyPropStms) then do
