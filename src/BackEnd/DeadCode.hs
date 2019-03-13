@@ -16,7 +16,7 @@ type PredTable = [(Int, [Int])]
 type SuccTable = [(Int, [Int])]
 type L = [(Int, ([Exp], [Exp]))]
 --              deftid mallocId
-type Malloc = [(Int, [Int])]
+type EqualTable = [(Exp, Exp)]
 data LFlow = L {    tree :: Stm,
                     defid :: Int,
                     reTree :: [Stm]} 
@@ -28,10 +28,10 @@ data LState = LState {  idCount :: Int,
                         st :: SuccTable,
                         pt :: PredTable,
                         lock :: [Int],
-                        mTable :: Malloc } deriving (Show, Eq)
+                        et :: EqualTable } deriving (Show, Eq)
 
 newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [],
-                    st = [], pt = [], lock = [], mTable = []} 
+                    st = [], pt = [], lock = [], et = []} 
 
 newL :: Stm -> State LState LFlow
 newL t = do 
@@ -97,15 +97,33 @@ nextID x src
     | x < (length src - 1) = [x + 1]
     | otherwise = []
 
+genEqual :: State LState ()
+genEqual = do
+    state <- get
+    mapM (addEqual) (wrappedFlow state)
+    return ()
+
+addEqual :: LFlow -> State LState ()
+addEqual flow = do
+    case tree flow of
+        (MOV a b) -> updateEqual (a, b)
+        otherwise -> return ()
+
+updateEqual :: (Exp, Exp) -> State LState ()
+updateEqual pair = do
+    state <- get
+    put $ state {et = (pair: (et state))}
+    return ()
+
 eliminateDeadCode :: [Stm] -> State LState [Stm]
 eliminateDeadCode stms = do
     state <- get
     let (flows, wrappedState) = runState (wrapL stms) state
         succ = genLSucc flows
         pred = genLPred flows
-    put $ wrappedState {st = succ, pt = pred, mTable = zip [0..((length flows) - 1)] (repeat []) } 
+    put $ wrappedState {st = succ, pt = pred} 
     -- -- put everything in the state
-    -- -- genAlias
+    genEqual
     mapM (addreTree) (wrappedFlow wrappedState)
     recursiveElim
     clearDeadCode
@@ -272,8 +290,12 @@ clearDeadCode =  do
 
 clearOne :: [Int] -> LFlow -> State LState ()
 clearOne locks flow
-    | (not $ elem (defid flow) locks) = updateLFlow $ flow {reTree = []}
+    | (not $ elem (defid flow) locks) && (not $ isFuncLab (tree flow))= updateLFlow $ flow {reTree = []}
     | otherwise = return ()
+
+isFuncLab :: Stm -> Bool
+isFuncLab (LABEL n) = not $ "label_" `isPrefixOf` n
+isFuncLab _ = False
 
 sideEffect :: LFlow -> Bool
 sideEffect l@(L (MOV (TEMP t) _) _ _)

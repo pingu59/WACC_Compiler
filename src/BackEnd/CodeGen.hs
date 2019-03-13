@@ -2,7 +2,6 @@ module BackEnd.CodeGen where
 
 import qualified Data.Set as Set
 import Control.Monad.State.Lazy
-
 import FrontEnd.AST
 import qualified BackEnd.Translate as Translate
 import BackEnd.Frame as Frame
@@ -14,6 +13,7 @@ import BackEnd.DataFlow as DataFlow
 import BackEnd.GenKill as GenKill
 import FrontEnd.SemanticAnalyzer
 import BackEnd.DeadCode
+import BackEnd.IR
 
 
 codeGen :: ProgramF () -> IO String
@@ -57,8 +57,14 @@ userFrags :: State Translate.TranslateState [[Assem.Instr]]
 userFrags = do
   state <- get
   let userFrags' = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags state)
-  f <- quadInterface f
-  let cleanDead = evalState (eliminateDeadCode userFrags') newLState
+  f <- mapM quadInterface userFrags'
+  --fail $ show f
+  f'<- mapM userFragsHelper f
+  return f'
+
+userFragsHelper :: [Stm] -> State Translate.TranslateState [Assem.Instr]
+userFragsHelper f = do
+  let cleanDead = evalState (eliminateDeadCode f) newLState
       constPropStms = evalState (constProp cleanDead) newReachState
       copyPropstms = evalState (copyprop constPropStms) newReachState
       cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState 
@@ -67,10 +73,10 @@ userFrags = do
       transState = trans_ cseState -- get the translate state out
   put transState
   if(cseout == copyPropStms) then do
-    mapM (\f -> Munch.munchmany f) cseout
+    Munch.munchmany cseout
   else do
     let copyPropStms' = evalState (copyprop cseout) newReachState
-    mapM (\f -> Munch.munchmany f) copyPropStms'
+    Munch.munchmany copyPropStms'
 
 builtInFrags :: State Translate.TranslateState [[Assem.Instr]]
 builtInFrags = do
