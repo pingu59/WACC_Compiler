@@ -216,12 +216,13 @@ elimAll = do
 elimOne :: Int -> State LState ()
 elimOne targetNum = do
     state <- get
-    let targetFlow = (wrappedFlow state) !! targetNum
+    let flows = (wrappedFlow state)
+        targetFlow = flows !! targetNum
         liveTable = live state
         thisLive = Data.List.lookup targetNum liveTable
         locks = lock state
         (liveIn, liveOut) = if thisLive == Nothing then fail (show liveTable) else fromJust thisLive
-    if (not $ sideEffect targetFlow) && (not $ elem targetNum locks) then
+    if (not $ sideEffect targetFlow (unL flows)) && (not $ elem targetNum locks) then
         case (tree targetFlow) of 
             (MOV (TEMP t) _) -> if (notSpecial t) && (not $ elem (TEMP t) liveOut) then do
                                     updateLFlow $ targetFlow {reTree = []}
@@ -337,17 +338,17 @@ exprNoTemp (MEM e _) = exprNoTemp e
 exprNoTemp (CALL _ exprs) = and (map exprNoTemp exprs)
 exprNoTemp _ = True
 
-sideEffect :: LFlow -> Bool
+sideEffect :: LFlow -> [Stm] -> Bool
 -- sideEffect l@(L (MOV t (MEM _ _)) _ _ _ _) = True
 -- sideEffect l@(L (MOV (MEM _ _) b) _ _ _ _) = True
-sideEffect l@(L (MOV t (CALL (NAME n) exps)) _ _ _ _) 
+sideEffect l@(L (MOV t (CALL (NAME n) exps)) _ _ _ _) _
     | "#p_" `isPrefixOf` n || n == "exit" = True
-sideEffect l@(L (CJUMP _ a b _ _ ) _ _ _ _) = True
-sideEffect l@(L (EXP (CALL (NAME n) exps)) _ _ _ _) 
+sideEffect l@(L (CJUMP _ a b _ _ ) _ _ _ _) _ = True
+sideEffect l@(L (EXP (CALL (NAME n) exps)) _ _ _ _) _
     | "#p_" `isPrefixOf` n || n == "exit" = True
-sideEffect l@(L (MOV t (BINEXP rop _ _)) _ _ _ _)
-    | elem rop [PLUS, MINUS, MUL, DIV, MOD] = True
-sideEffect x = False
+-- sideEffect l@(L (MOV t (BINEXP rop a b)) _ _ _ _) ref
+--     | elem rop [PLUS, MINUS, MUL, DIV, MOD] = True
+sideEffect x _= False
 
 testDeadCode file = do 
     ast <- parseFile file

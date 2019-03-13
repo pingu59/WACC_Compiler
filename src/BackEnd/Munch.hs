@@ -36,7 +36,10 @@ module BackEnd.Munch where
     t <- newTemp
     return ([IOPER {assem = CBS_ (ADD NoSuffix AL) (RTEMP t) SP (IMM i),
                    src = [13], dst = [t], jump = []}], t)
-  
+
+  munchExp (CALL (NAME "#malloc") _) =
+    return $ ([IOPER { assem = BRANCH_ (BL AL) (L_ "malloc"), src = [0], dst = [0], jump = ["malloc"]}], 0)
+                  
   munchExp (CALL (NAME "malloc") [CONSTI i, TEMP t]) = do
     let ldr = IOPER { assem = S_ (LDR W AL) (R0) (NUM (i)),
                     src = [], dst = [0], jump = []}

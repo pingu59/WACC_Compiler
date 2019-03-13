@@ -15,7 +15,7 @@ import BackEnd.Temp as Temp
 -}
 
 
-
+-- temp could be never overflow or not
 
 data Exp = CONSTI Int             -- constant int
          | CONSTC Char            -- constant char

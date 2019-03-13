@@ -79,8 +79,7 @@ testConstProp file = do
 quadInterface stm = do
     qstm <- quadStm stm
     stms <- transform qstm
-    return stms
-
+    return $ stms
 
 -- constant propagation
 constProp :: [Stm] -> State ReachState [Stm]
@@ -771,11 +770,31 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV (MEM m size) c) : rest)
-    | m == (TEMP t) && t /= 13 = ((MOV (MEM (BINEXP bop b1 b2) size) c) : putBackMemAccess rest)
-putBackMemAccess ((MOV (TEMP t) (BINEXP bop b1 b2)): (MOV c (MEM m size)) : rest)
-    | m == (TEMP t) && t /= 13 = ((MOV c (MEM (BINEXP bop b1 b2) size)) : putBackMemAccess rest)
-putBackMemAccess ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
+putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+
+putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
+putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
+  = putBackMemAccess' newref rest
+    where
+        newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
+
+putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
+  = putBackMemAccess' newref rest
+    where
+        newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
+putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
     | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
-putBackMemAccess (x:xs) = x : (putBackMemAccess xs)
-putBackMemAccess [] = []
+putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
+putBackMemAccess' ref [] = concatMap snd ref
+
+updateRef i stm ref= [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
+
+findTemp :: Exp -> [(Int, [Stm])] -> (Int, Exp)
+findTemp temp [] = undefined
+findTemp temp ((num, [(MOV a b)]):xs)
+    | a == temp = (num, b)
+findTemp temp (x : xs) = findTemp temp xs
