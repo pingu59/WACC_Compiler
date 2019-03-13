@@ -7,7 +7,7 @@ import BackEnd.Frame
 import Data.Maybe
 import Data.List
 import BackEnd.Temp as Temp
-import FrontEnd.AST 
+import FrontEnd.AST
 import FrontEnd.Parser
 import FrontEnd.SemanticAnalyzer
 import BackEnd.DataFlow hiding (addreTree, contains)
@@ -16,25 +16,25 @@ type PredTable = [(Int, [Int])]
 type SuccTable = [(Int, [Int])]
 type L = [(Int, ([Exp], [Exp]))]
 --              deftid mallocId
-type Malloc = [(Int, [Int])]
+type EqualTable = [(Exp, Exp)]
 data LFlow = L {    tree :: Stm,
                     defid :: Int,
-                    reTree :: [Stm]} 
+                    reTree :: [Stm]}
                     deriving (Show, Eq)
 
 data LState = LState {  idCount :: Int,
-                        memFlow :: [Exp], 
+                        memFlow :: [Exp],
                         wrappedFlow :: [LFlow],
                         st :: SuccTable,
                         pt :: PredTable,
                         lock :: [Int],
-                        mTable :: Malloc } deriving (Show, Eq)
+                        et :: EqualTable } deriving (Show, Eq)
 
 newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [],
-                    st = [], pt = [], lock = [], mTable = []} 
+                    st = [], pt = [], lock = [], et = []}
 
 newL :: Stm -> State LState LFlow
-newL t = do 
+newL t = do
     oldState <- get
     let count = idCount oldState
     put $ oldState {idCount = count + 1}
@@ -56,11 +56,11 @@ genLSucc flow = genLSucc' flow flow []
 
 genLSucc' :: [LFlow] -> [LFlow] -> SuccTable -> SuccTable
 genLSucc' src [] acc = acc
-genLSucc' src ((L (CJUMP _ _ _ t f) defid _) : rest) acc 
+genLSucc' src ((L (CJUMP _ _ _ t f) defid _) : rest) acc
     = genLSucc' src rest (acc ++ [(defid, (searchLable t src) ++ (searchLable f src))])
-genLSucc' src ((L (JUMP (NAME l) _) defid _) : rest) acc 
+genLSucc' src ((L (JUMP (NAME l) _) defid _) : rest) acc
     = genLSucc' src rest (acc ++ [(defid, (searchLable l src))])
-genLSucc' src ((L _ defid _) : rest) acc 
+genLSucc' src ((L _ defid _) : rest) acc
     = genLSucc' src rest (acc ++ [(defid, (nextID defid src))])
 
 genLPred :: [LFlow] -> PredTable
@@ -97,15 +97,33 @@ nextID x src
     | x < (length src - 1) = [x + 1]
     | otherwise = []
 
+genEqual :: State LState ()
+genEqual = do
+    state <- get
+    mapM (addEqual) (wrappedFlow state)
+    return ()
+
+addEqual :: LFlow -> State LState ()
+addEqual flow = do
+    case tree flow of
+        (MOV a b) -> updateEqual (a, b)
+        otherwise -> return ()
+
+updateEqual :: (Exp, Exp) -> State LState ()
+updateEqual pair = do
+    state <- get
+    put $ state {et = (pair: (et state))}
+    return ()
+
 eliminateDeadCode :: [Stm] -> State LState [Stm]
 eliminateDeadCode stms = do
     state <- get
     let (flows, wrappedState) = runState (wrapL stms) state
         succ = genLSucc flows
         pred = genLPred flows
-    put $ wrappedState {st = succ, pt = pred, mTable = zip [0..((length flows) - 1)] (repeat []) } 
+    put $ wrappedState {st = succ, pt = pred}
     -- -- put everything in the state
-    -- -- genAlias
+    genEqual
     mapM (addreTree) (wrappedFlow wrappedState)
     recursiveElim
     clearDeadCode
@@ -140,7 +158,7 @@ recursiveElim = do
         return ()
     else
         recursiveElim
-    
+
 elimAll :: State LState ()
 elimAll = do
     state <- get
@@ -164,7 +182,7 @@ elimOne targetNum = do
 
 lockFlow :: LFlow -> State LState ()
 lockFlow flow = do
-    state <- get 
+    state <- get
     let locks = lock state
     put $ state {lock = (defid flow : locks)}
     return ()
@@ -172,7 +190,7 @@ lockFlow flow = do
 notSpecial t = not $ elem t [0, 1, 2, 13, 14, 15]
 
 lockUsed :: LFlow -> State LState ()
-lockUsed l@(L (EXP m@(CALL (NAME n) _ )) _ _) 
+lockUsed l@(L (EXP m@(CALL (NAME n) _ )) _ _)
     | n == "#memaccess" = getLocks [m] l
 
 lockUsed l@(L (EXP c@(CALL _ exps )) defid _) = getExprLocks exps l
@@ -187,7 +205,7 @@ lockUsed l@(L (MOV (MEM (TEMP t) size) b) defid _) = getExprLocks [b] l
 
 lockUsed l@(L (MOV (MEM a _) b) defid _) = getExprLocks [a, b] l
 
-lockUsed l@(L (MOV (TEMP t) m) defid _) = getExprLocks [m] l 
+lockUsed l@(L (MOV (TEMP t) m) defid _) = getExprLocks [m] l
 
 lockUsed l@(L (CJUMP rop a b t f) defid _) =  getExprLocks [a, b] l >> lockLable [t, f]
 
@@ -203,7 +221,7 @@ getExprLocks exps l = mapM (\x -> getExprLocks' x l) exps >> return ()
 
 getExprLocks' :: Exp -> LFlow -> State LState ()
 getExprLocks' (BINEXP bop a b) l = getExprLocks' a l>> getExprLocks' b l
-getExprLocks' t@(TEMP _) l = getLocks [t] l 
+getExprLocks' t@(TEMP _) l = getLocks [t] l
 getExprLocks' (CALL _ exps) l = getExprLocks exps l
 getExprLocks' (MEM a _) l = getExprLocks' a l
 getExprLocks' _ _= return ()
@@ -216,9 +234,9 @@ lockLable labels = do
         lablelocks = map defid $ filter (containsLable labels) flows
     put $ state {lock = union locks lablelocks}
     return ()
-    
+
 containsLable :: [String] -> LFlow -> Bool
-containsLable labels l@(L (LABEL lab) defid _) = elem lab labels 
+containsLable labels l@(L (LABEL lab) defid _) = elem lab labels
 containsLable _ _ = False
 
 getLocks :: [Exp] -> LFlow -> State LState ()
@@ -243,8 +261,8 @@ findDec' dec cur pt flows visited
         next = (fromJust $ Data.List.lookup cur pt) \\ visited
 
 startswith :: Stm -> Exp -> Bool
-startswith (MOV (MEM (CALL (NAME "#memaccess") [CONSTI i11, CONSTI i12]) _) _) 
-            (MEM (CALL (NAME "#memaccess") [CONSTI i21, CONSTI i22]) _) 
+startswith (MOV (MEM (CALL (NAME "#memaccess") [CONSTI i11, CONSTI i12]) _) _)
+            (MEM (CALL (NAME "#memaccess") [CONSTI i21, CONSTI i22]) _)
     = (i11 -i12) == (i21 - i22)
 startswith (MOV a _) target = a == target
 startswith (EXP (CALL (NAME "malloc") [_, t])) target = t == target
@@ -272,8 +290,12 @@ clearDeadCode =  do
 
 clearOne :: [Int] -> LFlow -> State LState ()
 clearOne locks flow
-    | (not $ elem (defid flow) locks) = updateLFlow $ flow {reTree = []}
+    | (not $ elem (defid flow) locks) && (not $ isFuncLab (tree flow))= updateLFlow $ flow {reTree = []}
     | otherwise = return ()
+
+isFuncLab :: Stm -> Bool
+isFuncLab (LABEL n) = not $ "label_" `isPrefixOf` n
+isFuncLab _ = False
 
 sideEffect :: LFlow -> Bool
 sideEffect l@(L (MOV (TEMP t) _) _ _)
@@ -282,14 +304,14 @@ sideEffect l@(L (MOV t (CALL (NAME n) exps)) _ _)
     | "#p_" `isPrefixOf` n || n == "exit" = True
 sideEffect l@(L (CJUMP _ a b _ _ ) _ _) = True
 sideEffect l@(L (JUMP _ _ ) _ _) = True
-sideEffect l@(L (EXP (CALL (NAME n) exps)) _ _) 
+sideEffect l@(L (EXP (CALL (NAME n) exps)) _ _)
     | "#p_" `isPrefixOf` n || n == "exit" = True
 sideEffect l@(L (LABEL "main" ) _ _) = True
 sideEffect l@(L (PUSHREGS _) _ _)  = True
 sideEffect l@(L (POPREGS _) _ _)  = True
 sideEffect x = False
 
-testDeadCode file = do 
+testDeadCode file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
@@ -298,7 +320,7 @@ testDeadCode file = do
         liveCode = evalState (eliminateDeadCode stms) newLState
     return liveCode
 
-testMalloc file = do 
+testMalloc file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
@@ -308,7 +330,7 @@ testMalloc file = do
     return $ pt livestate
 
 
-testStms file = do 
+testStms file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
