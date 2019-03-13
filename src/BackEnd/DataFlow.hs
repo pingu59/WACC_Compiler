@@ -73,8 +73,8 @@ testConstProp file = do
   let (stm, s) = runState (translate ast') newTranslateState;
       (qstm, qs') = runState (quadStm stm) s
       (stms, s') = runState (transform qstm) qs'
-      constP = evalState (constProp stms) newReachState
-  return constP
+      --constP = evalState (constProp stms) newReachState
+  return stms
 
 quadInterface stm = do
     qstm <- quadStm stm
@@ -180,6 +180,7 @@ foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2))
    | i2 == 0 = Nothing
   | i1 * i2 > 0 =  Just (CONSTI (mod i1 i2))
   | otherwise =  Just (CONSTI (mod i1 (negate i2)))
+foldExp (CALL (NAME "neg") ((CONSTI i):rest)) = Just (CONSTI (negate i))
 foldExp e =  Just e
 
 findConst :: Int -> Temp -> State ReachState Bool

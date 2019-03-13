@@ -151,11 +151,6 @@ module BackEnd.Munch where
       (i, t) <- munchExp e
       return  (i++ [(move_to_r t 0), (ljump_to_label (drop 1 n))], dummy)
 
-  munchExp (CALL (NAME n) e)
-    | n == "#fst" = accessPair True e
-    | n == "#snd" = accessPair False e
-    | n == "#newpair" = createPair e
-
   {- r0 / r1 : result in r0 -}
   munchExp (BINEXP DIV e1 e2) = do
     case (constBop e1 e2 DIV) of
@@ -635,44 +630,6 @@ module BackEnd.Munch where
   munchDataFrag (STRING label str l)
     = [ILABEL {assem = (ARM.M label l str), lab = label}]
   --subrtacting the space occupied by ""
-
-  createPair :: [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
-  -- pre : exps is [length fst, length snd, fst, snd]
-  createPair [(CONSTI fsize), (CONSTI ssize), f, s] = do
-    (i1, t1) <- munchExp f
-    (i2, t2) <- munchExp s
-    tadddr <- newTemp -- pair addr
-    let
-        suffix = \size -> if size == 4 then W else B_
-        ld8 = IOPER { assem = (S_ (LDR W AL) R0 (NUM 8)), src = [], dst = [0], jump = []}
-        ldsize = \size -> IOPER { assem = (S_ (LDR W AL) R0 (NUM size)), src = [], dst = [0], jump = []}
-        malloc = IOPER { assem = BRANCH_ (BL AL) (L_ "malloc"), src = [0], dst = [0], jump = ["malloc"]}
-        strPairAddr = IMOV { assem = MC_ (ARM.MOV AL) (RTEMP tadddr) (R R0), src = [0], dst = [tadddr]}
-        savefst = IOPER { assem = (S_ (STR (suffix fsize) AL) (RTEMP t1) (Imm R0 0)),
-                          src = [t1, 0], dst = [], jump = []}
-        savesnd = IOPER { assem = (S_ (STR (suffix ssize) AL) (RTEMP t2) (Imm R0 0)),
-                          src = [t2, 0], dst = [], jump = []}
-        strfstaddr = IOPER { assem = (S_ (STR W AL) R0 (Imm (RTEMP tadddr) 0)),
-                             src = [tadddr, 0], dst = [], jump = []}
-        strsndaddr = IOPER { assem = (S_ (STR W AL) R0 (Imm (RTEMP tadddr) 4)),
-                             src = [tadddr, 0], dst = [], jump = []}
-        strpaironstack= IOPER { assem = (S_ (STR W AL) (RTEMP tadddr) (Imm (RTEMP 13) 0)),
-                                src = [tadddr, 13], dst = [], jump = []}
-    return ([ld8, malloc, strPairAddr] ++ i1 ++ [(ldsize fsize), malloc, savefst, strfstaddr]
-             ++ i2 ++ [(ldsize ssize), malloc, savesnd, strsndaddr, strpaironstack], tadddr)
-
-  accessPair :: Bool -> [Exp] -> State TranslateState ([ASSEM.Instr], Temp)
-  accessPair isfst [MEM e ty] = do
-    (i, t) <- munchExp (MEM e ty)
-    let offset = if isfst then 0 else 4
-        getpaddr = move_to_r t 0
-        check = IOPER { assem = BRANCH_ (BL AL) (L_ "p_check_null_pointer")
-                        , src = [0], dst = [], jump = ["p_check_null_pointer"]}
-        s1 = IOPER {assem = (S_ (LDR (if ty == 1 then SB else W) AL) (RTEMP t)
-                             (Imm (RTEMP t) offset)), src = [t], dst = [t], jump = []}
-    return (i ++ [getpaddr, check, s1], t)  -- cannot handle sb/w here as only return reg
-
-
   -------------------- Utilities ---------------------
   condIR = [IR.EQ, IR.LT, IR.LE, IR.GT, IR.GE, IR.NE]
   condARM = [ARM.EQ, ARM.LT, ARM.LE, ARM.GT, ARM.GE, ARM.NE]

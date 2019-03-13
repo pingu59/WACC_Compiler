@@ -57,7 +57,20 @@ userFrags :: State Translate.TranslateState [[Assem.Instr]]
 userFrags = do
   state <- get
   let userFrags' = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags state)
-  mapM (\f -> quadInterface f >>= \f' -> Munch.munchmany f') userFrags'
+  f <- quadInterface f
+  let cleanDead = evalState (eliminateDeadCode userFrags') newLState
+      constPropStms = evalState (constProp cleanDead) newReachState
+      copyPropstms = evalState (copyprop constPropStms) newReachState
+      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
+  state' <- get
+  let (cseout, cseState) = runState (cse cleanDead2 state') GenKill.newAState
+      transState = trans_ cseState -- get the translate state out
+  put transState
+  if(cseout == copyPropStms) then do
+    mapM (\f -> Munch.munchmany f) cseout
+  else do
+    let copyPropStms' = evalState (copyprop cseout) newReachState
+    mapM (\f -> Munch.munchmany f) copyPropStms'
 
 builtInFrags :: State Translate.TranslateState [[Assem.Instr]]
 builtInFrags = do

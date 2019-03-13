@@ -582,9 +582,13 @@ translateNewPair (TPair t1 t2) [f, s] = do
 
 
 translatePairAccess :: Type -> [Exp] -> String -> State TranslateState IExp
-translatePairAccess t exps str = do
+translatePairAccess t [MEM e ty] str = do
   addBuiltIn id_p_check_null_pointer
-  return $ Ex $ MEM (CALL (NAME ("#" ++ str)) exps) (typeLen t)
+  temp <- newTemp
+  let offset = if str == "fst" then (TEMP temp) else (BINEXP PLUS (TEMP temp) (CONSTI 4))
+      getpaddr = (MOV (TEMP temp) (MEM e ty))
+      check = EXP $ Frame.externalCall "#p_check_null_pointer" [(TEMP temp)]
+  return $ Ex $ ESEQ (SEQ getpaddr check) (MEM offset (typeLen t))
 
 -- turn IExp to Exp
 unEx :: IExp -> State TranslateState Exp
