@@ -314,10 +314,13 @@ translateStatF (Ann (Declare t id expr) _) = do
   let { Ann (Ident symbol) _ = id }
   access <- allocLocal symbol t True
   exp <- translateExprF expr
-  let { mem' = MEM (TEMP Frame.sp) (typeLen t)} -- access through sp --use this one!
+  state <- get
+  let mem' = (CALL (NAME "#memaccess") [CONSTI 0, CONSTI spTotal]) -- access through sp --use this one!
+      levelSize l = Frame.frameSize $ levelFrame l
+      spTotal = sum (map levelSize (levels state))
   addVarEntry symbol t access
   exp' <- unEx exp
-  return $ Nx (SEQ adjustSP (MOV mem' exp'))
+  return $ Nx (SEQ adjustSP (MOV (MEM mem' (typeLen t)) exp'))
   where adjustSP =
           MOV (TEMP Frame.sp) (BINEXP MINUS (TEMP Frame.sp) (CONSTI $ Frame.typeSize t))
 

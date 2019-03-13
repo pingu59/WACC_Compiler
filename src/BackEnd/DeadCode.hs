@@ -10,8 +10,9 @@ import BackEnd.Temp as Temp
 import FrontEnd.AST 
 import FrontEnd.Parser
 import FrontEnd.SemanticAnalyzer
-import BackEnd.DataFlow hiding (addreTree)
-    
+import BackEnd.DataFlow hiding (addreTree, contains)
+
+type PredTable = [(Int, [Int])]
 type SuccTable = [(Int, [Int])]
 type Liveness = [(Int, ([Int],[Int]))]
 type LGK = [(Int, ([Exp], [Exp]))]
@@ -27,9 +28,12 @@ data LState = LState {  idCount :: Int,
                         memFlow :: [Exp], 
                         wrappedFlow :: [LFlow],
                         live :: Live,
-                        st :: SuccTable} deriving (Show, Eq)
+                        st :: SuccTable,
+                        pt :: PredTable,
+                        lock :: [Int]} deriving (Show, Eq)
 
-newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [], st = [], live = []} 
+newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [],
+                    st = [], live = [], pt = [], lock = []} 
 
 newL :: Stm -> State LState LFlow
 newL t = do 
@@ -60,12 +64,12 @@ wrapOneLGK l@(L (MOV t (MEM b _)) _ _ _ _)
     = return $ l{gen = [b], kill = [t]}
 wrapOneLGK l@(L (MOV (MEM _ _) b) _ _ _ _) = return $ l {gen = [b]}
 wrapOneLGK l@(L (MOV t (CALL (NAME n) exps)) _ _ _ _) 
-    | "#p_" `isPrefixOf` n = return $ l {kill = [t]}
+    | "#p_" `isPrefixOf` n || n == "memaccess" = return $ l {kill = [t]}
     | otherwise = return $ l {kill = [t], gen = exps}
 wrapOneLGK l@(L (MOV t b) _ _ _ _) = return $ l {kill = [t], gen = [b]}
 wrapOneLGK l@(L (CJUMP _ a b _ _ ) _ _ _ _) = return $ l {gen = [a, b]}
 wrapOneLGK l@(L (EXP (CALL (NAME n) exps)) _ _ _ _) 
-    | "#p_" `isPrefixOf` n = return $ l 
+    | "#p_" `isPrefixOf` n || n == "memaccess" = return $ l 
     | otherwise = return $ l {gen = exps}
 wrapOneLGK x = return x
 
@@ -80,6 +84,30 @@ genLSucc' src ((L (JUMP (NAME l) _) _ _ defid _) : rest) acc
     = genLSucc' src rest (acc ++ [(defid, (searchLable l src))])
 genLSucc' src ((L _ _ _ defid _) : rest) acc 
     = genLSucc' src rest (acc ++ [(defid, (nextID defid src))])
+
+genLPred :: [LFlow] -> PredTable
+genLPred flow = genLPred' flow flow []
+
+genLPred' :: [LFlow] -> [LFlow] -> PredTable -> PredTable
+genLPred' src [] acc = acc
+genLPred' src ((L (LABEL l) _ _ defid _) : rest) acc = genLPred' src rest (acc ++ [(defid, (searchLable l))])
+    where
+        searchLable :: String -> [Int]
+        searchLable l = (searchLable' src l []) ++ pred
+        searchLable' :: [LFlow] -> String -> [Int] -> [Int]
+        searchLable' [] _ acc = acc
+        searchLable' ((L (JUMP _ lables) _ _ defid _) : rest) l acc
+            | elem l lables = searchLable' rest l (defid:acc)
+        searchLable' ((L (CJUMP _ _ _ t f) _ _ defid _) : rest) l acc
+            | l == t || l == f = searchLable' rest l (defid:acc)
+        searchLable' (_:rest) l acc = searchLable' rest l acc
+        pred = if (defid /= 0)&&(isNotjump (src!! (defid - 1)))
+                then (prevId defid) else []
+        isNotjump (L (JUMP _ _) _ _ _ _) = False
+        isNotjump (L (CJUMP _ _ _ _ _) _ _ _ _) = False
+        isNotjump _ = True
+
+genLPred' src ((L _ _ _ defid _) : rest) acc = genLPred' src rest (acc ++ [(defid, (prevId defid))])
 
 searchLable :: String -> [LFlow] -> [Int]
 searchLable str ((L (LABEL lab) _ _ defid _):xs)
@@ -117,11 +145,12 @@ iterateLive gk this succ
             (gen, kill) = if getgk == Nothing then fail "Nothing!" else fromJust getgk
             newIn = union gen (newOut \\ kill)
 
-genLive :: [LFlow] -> (Live, SuccTable)
-genLive flow = (iterateLive gk init succ, succ)
+genLive :: [LFlow] -> (Live, SuccTable, PredTable)
+genLive flow = (iterateLive gk init succ, succ, pred)
     where
         (gk, init) = initLive flow
         succ = genLSucc flow
+        pred = genLPred flow
 
 eliminateDeadCode :: [Stm] -> State LState [Stm]
 eliminateDeadCode stms = do
@@ -131,7 +160,7 @@ eliminateDeadCode stms = do
     mapM (addreTree) (wrappedFlow gkstate)
     recursiveElim
     state' <- get
-    return $ unL $ wrappedFlow state'
+    return $ clearStack $ unL $ wrappedFlow state'
 
 addreTree :: LFlow -> State LState ()
 addreTree flow = do
@@ -155,11 +184,13 @@ recursiveElim = do
     state <- get
     let stms = unL $ wrappedFlow state
         (gk, gkstate) = runState (wrapLGK stms) newLState
-        (live_, st_) = genLive gk
-    put $ gkstate {st = st_, live = live_} -- put everything in the state
+        (live_, st_, pt_) = genLive gk
+    put $ gkstate {st = st_, live = live_, pt = pt_} -- put everything in the state
     gkstate' <- get
+    mapM (lockUsed) (wrappedFlow gkstate')
     mapM (addreTree) (wrappedFlow gkstate')
     elimAll
+    clearNoTemp
     removeEmpty
     state' <- get
     let oldflow = wrappedFlow state
@@ -188,19 +219,123 @@ elimOne targetNum = do
     let targetFlow = (wrappedFlow state) !! targetNum
         liveTable = live state
         thisLive = Data.List.lookup targetNum liveTable
+        locks = lock state
         (liveIn, liveOut) = if thisLive == Nothing then fail (show liveTable) else fromJust thisLive
-    if (not $ sideEffect targetFlow) then
+    if (not $ sideEffect targetFlow) && (not $ elem targetNum locks) then
         case (tree targetFlow) of 
-            (MOV (TEMP t) expr) -> if not $ elem (TEMP t) liveOut then
-                                    --clearMem t >>
+            (MOV (TEMP t) _) -> if (notSpecial t) && (not $ elem (TEMP t) liveOut) then do
                                     updateLFlow $ targetFlow {reTree = []}
                                 else return ()
             otherwise -> return ()
     else
         return ()
 
-clearMem :: Int -> State LState ()
-clearMem temp = undefiend
+notSpecial t = not $ elem t [0, 1, 2, 13, 14, 15]
+
+lockUsed :: LFlow -> State LState ()
+lockUsed l@(L (MOV _ c@(CALL _ exps )) _ _ defid _) = getLocks exps l
+
+lockUsed l@(L (EXP c@(CALL _ exps )) _ _ defid _) = getLocks exps l
+
+lockUsed l@(L (MOV t m@(MEM _ _ )) _ _ defid _) = getLocks [m] l
+
+lockUsed _ = return ()
+
+getLocks :: [Exp] -> LFlow -> State LState ()
+getLocks exps flow = do
+    state <- get
+    let pt_ = pt state
+        defid_ = defid flow
+        flows = wrappedFlow state
+        str = concatMap (\m -> findDec m defid_ pt_ flows) exps
+    put $ state {lock = (str ++ (lock state))}
+    return ()
+
+findDec :: Exp -> Int -> PredTable -> [LFlow] -> [Int]
+findDec dec cur pt flows 
+    | found = [cur]
+    | otherwise = concatMap (\x -> findDec dec x pt flows) next
+    where
+        found = startswith (tree (flows !! cur)) dec
+        next = fromJust $ Data.List.lookup cur pt
+
+startswith :: Stm -> Exp -> Bool
+startswith (MOV (MEM (CALL (NAME "#memaccess") [CONSTI i11, CONSTI i12]) _) _) 
+            (MEM (CALL (NAME "#memaccess") [CONSTI i21, CONSTI i22]) _) 
+    = (i11 -i12) == (i21 - i22)
+startswith (MOV a _) target = a == target
+startswith _ _ = False
+
+
+clearStack :: [Stm] -> [Stm]
+clearStack stms = reverse (clearStack' (reverse stms))
+
+clearStack' ((MOV (TEMP 13) (BINEXP PLUS (TEMP 13) (CONSTI i1))): (MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI i2))): xs)
+  = clearStack' ((MOV (TEMP 13) (BINEXP PLUS (TEMP 13) (CONSTI $ i1 - i2))):xs)
+clearStack' ((MOV (TEMP 13) (BINEXP PLUS (TEMP 13) (CONSTI i1))): (MOV (TEMP 13) (BINEXP PLUS (TEMP 13) (CONSTI i2))): xs)
+  = clearStack' ((MOV (TEMP 13) (BINEXP PLUS (TEMP 13) (CONSTI $ i1 + i2))):xs)
+clearStack' ((MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI i1))): (MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI i2))): xs)
+    = clearStack' ((MOV (TEMP 13) (BINEXP MINUS (TEMP 13) (CONSTI $ i1 + i2))):xs)
+clearStack' (x:xs)
+  = x : clearStack' (xs)
+clearStack'[] = []
+
+clearNoTemp :: State LState ()
+clearNoTemp =  do
+    state <- get
+    -- fail $ show (lock state)
+    mapM (clearOne (lock state)) (wrappedFlow state)
+    return ()
+
+clearOne :: [Int] -> LFlow -> State LState ()
+clearOne locks flow
+    | (noTemp flow) &&  (not $ elem (defid flow) locks) = updateLFlow $ flow {reTree = []}
+    | otherwise = return ()
+
+clearUsage :: Int -> State LState ()
+clearUsage temp = do
+    state <- get
+    mapM (rmIfContains temp) (wrappedFlow state)
+    return ()
+
+rmIfContains :: Int -> LFlow -> State LState ()
+rmIfContains temp flow
+    | (contains (TEMP temp) flow) = updateLFlow $ flow {reTree = []}
+    | otherwise = return ()
+
+
+contains :: Exp -> LFlow -> Bool
+--s1
+contains target (L (MOV a expr@(BINEXP _ b c )) _ _ _ _)
+    | b == target || c == target = True
+--s5
+contains target (L (MOV a expr@(MEM b _)) _ _ _ _)
+    | b == target = True
+--s9
+contains target (L (MOV a expr@(CALL e es)) _ _ _ _)
+    | elem target (e:es) = True
+--s8
+contains target (L (EXP expr@(CALL e es)) _ _ _ _)
+    | elem target (e:es) = True
+--s6
+contains target (L (MOV expr@(MEM a _) b) _ _ _ _)
+    | a == target = True
+
+--s3
+contains _ _ = False
+
+noTemp :: LFlow -> Bool
+--s1
+noTemp (L (MOV a expr) _ _ _ _)
+    | exprNoTemp a && exprNoTemp expr = True
+--s3
+noTemp _ = False
+
+exprNoTemp (TEMP _) = False
+exprNoTemp (BINEXP _ a b) = (exprNoTemp a) && (exprNoTemp b)
+exprNoTemp (MEM e _) = exprNoTemp e 
+exprNoTemp (CALL _ exprs) = and (map exprNoTemp exprs)
+exprNoTemp _ = True
 
 sideEffect :: LFlow -> Bool
 -- sideEffect l@(L (MOV t (MEM _ _)) _ _ _ _) = True
@@ -230,14 +365,13 @@ seeLive file = do
         (qstm, qs') = runState (quadStm stm) s
         (stms, s') = runState (transform qstm) qs'
         (gk, gkstate) = runState (wrapLGK stms) newLState
-        (live_, st_) = genLive gk
-    return live_ 
+        (live_, st_, _) = genLive gk
+    return gk 
 
 seeLiveStm stms = live_
     where
         (gk, gkstate) = runState (wrapLGK stms) newLState
-        (live_, st_) = genLive gk
-
+        (live_, st_, _) = genLive gk
 
 
 testStm = [(MOV (TEMP 2) (CONSTI 2)),(MOV (TEMP 1) (CONSTI 1)) ,(EXP (CALL (NAME "exit") [(TEMP 1)]))]
