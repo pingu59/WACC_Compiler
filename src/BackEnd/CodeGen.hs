@@ -28,11 +28,11 @@ instrGen ast = do
   let cleanDead = evalState (eliminateDeadCode stms) newLState
       constPropStms = evalState (constProp cleanDead) newReachState
       copyPropstms = evalState (copyprop constPropStms) newReachState
-      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
   state <- get
-  let (cseout, cseState) = runState (cse cleanDead2 state) GenKill.newAState
+  let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
+  fail $ show $ putBackMemAccess cseout
   if(cseout == copyPropStms) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
     code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess cseout) --
@@ -67,9 +67,8 @@ userFragsHelper f = do
   let cleanDead = evalState (eliminateDeadCode f) newLState
       constPropStms = evalState (constProp cleanDead) newReachState
       copyPropstms = evalState (copyprop constPropStms) newReachState
-      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
   state' <- get
-  let (cseout, cseState) = runState (cse cleanDead2 state') GenKill.newAState
+  let (cseout, cseState) = runState (cse constPropStms state') GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
   if(cseout == copyPropStms) then do

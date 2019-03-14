@@ -516,9 +516,13 @@ translateBuiltInFuncAppF (Ann (FuncApp t id exprs) (pos, expT)) = do
 callp = \s -> (\exprs -> return $ Ex $ CALL (NAME s) exprs)
 
 translateFree :: Type -> [Exp] -> State TranslateState IExp
-translateFree (TPair _ _) exprs = do
+translateFree (TPair _ _) [pairAddr] = do
   addBuiltIn id_p_free_pair
-  callp "#p_free_pair" exprs
+  temp <- newTemp
+  let ld = (MOV (TEMP temp) pairAddr)
+      free = EXP $ Frame.externalCall "p_free_pair" [(TEMP temp)]
+  return $ Nx (SEQ ld free)
+
 translateFree (TArray _) exprs = callp "#p_free_array" exprs
 translateFree TStr exprs = callp "#p_free_array" exprs
 

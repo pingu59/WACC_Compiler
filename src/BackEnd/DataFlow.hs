@@ -842,33 +842,34 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess stms = stms -- putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
 
--- putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
--- putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
---   = putBackMemAccess' newref rest
---     where
---         newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
---         to = (length ref - (length rest))
---         (from, sub) = findTemp (TEMP t) ref
+putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
+putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
+  | size > 0 = putBackMemAccess' newref rest
+    where
+        newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
 
--- putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
---   = putBackMemAccess' newref rest
---     where
---         newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
---         to = (length ref - (length rest))
---         (from, sub) = findTemp (TEMP t) ref
--- putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
--- putBackMemAccess' ref [] = concatMap snd ref
+putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
+  | size > 0 = putBackMemAccess' newref rest
+    where
+        newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
+        
+putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
+putBackMemAccess' ref [] = concatMap snd ref
 
--- updateRef i stm ref
---     | i > 0 = [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
---     | otherwise = ref
+updateRef i stm ref
+    | i > 0 = [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
+    | otherwise = ref
 
--- findTemp :: Exp -> [(Int, [Stm])] -> (Int, Exp)
--- findTemp temp [] = undefined
--- findTemp temp ((num, [(EXP (CALL (NAME "malloc") [a, b]))] ):xs)
---     | b == temp = (-1, b) -- should not delete
--- findTemp temp ((num, [(MOV a b)]):xs)
---     | a == temp = (num, b)
--- findTemp temp (x : xs) = findTemp temp xs
+findTemp :: Exp -> [(Int, [Stm])] -> (Int, Exp)
+findTemp temp [] = undefined
+findTemp temp ((num, [(EXP (CALL (NAME "malloc") [a, b]))] ):xs)
+    | b == temp = (-1, b) -- should not delete
+findTemp temp ((num, [(MOV a b)]):xs)
+    | a == temp = (num, b)
+findTemp temp (x : xs) = findTemp temp xs

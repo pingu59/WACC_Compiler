@@ -25,14 +25,14 @@ data LFlow = L {    tree :: Stm,
 data LState = LState {  idCount :: Int,
                         memFlow :: [Exp], 
                         wrappedFlow :: [LFlow],
+                        synExpr :: SynTable,
                         st :: SuccTable,
                         pt :: PredTable,
                         lock :: [Int],
-                        et :: EqualTable,
-                        synonyms :: SynTable } deriving (Show, Eq)
+                        et :: EqualTable} deriving (Show, Eq)
 
 newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [],
-                    st = [], pt = [], lock = [], et = [], synonyms = []} 
+                    st = [], pt = [], lock = [], et = [], synExpr = []} 
 
 newL :: Stm -> State LState LFlow
 newL t = do 
@@ -107,8 +107,16 @@ genEqual = do
 addEqual :: LFlow -> State LState ()
 addEqual flow = do
     case tree flow of
-        (MOV a b) -> updateEqual (a, b)
+        (MOV a b) -> if not (containsSP a || containsSP b) then 
+                        updateEqual (a, b)
+                     else return ()
         otherwise -> return ()
+
+containsSP :: Exp -> Bool
+containsSP (TEMP 13) = True
+containsSP (BINEXP _ a b) = containsSP a || containsSP b
+containsSP (MEM a _) = containsSP a
+containsSP _ = False
 
 updateEqual :: (Exp, Exp) -> State LState ()
 updateEqual (a, b) = do
@@ -124,9 +132,9 @@ eliminateDeadCode stms = do
         pred = genLPred flows
     put $ wrappedState {st = succ, pt = pred} 
     -- -- put everything in the state
+    mapM (addreTree) (wrappedFlow wrappedState)
     genEqual
     genSym
-    mapM (addreTree) (wrappedFlow wrappedState)
     recursiveElim
     clearDeadCode
     state' <- get
@@ -194,34 +202,51 @@ notSpecial t = not $ elem t [0, 1, 2, 13, 14, 15]
 lockEqualMem :: Exp -> LFlow -> State LState ()
 lockEqualMem m@(MEM a size) flow = do
     state <- get
-    let syn = lookup (MEM a size) (synonyms state) 
+    let syn = lookup (MEM a size) (synExpr state) 
         pt_ = pt state
     case syn of
-        Just num -> lockSynonym num (defid flow) pt_ []
+        Just num -> lockSynonym num (defid flow) pt_
         Nothing -> return ()
 
 lockEqualMem m flow = lockEqualMem (MEM m 1) flow >> lockEqualMem (MEM m 4) flow
 
-lockSynonym :: Int -> Int -> PredTable -> [Int] -> State LState ()
-lockSynonym synNum cur pt visited = do
+lockSynonym :: Int -> Int -> PredTable -> State LState ()
+lockSynonym synNum cur pt= do
+    let next' = Data.List.lookup cur pt
+    case next' of
+        Nothing -> return ()
+        Just next -> mapM (\x -> lockSynonym' synNum x pt [cur]) (next) >>
+                    return ()
+
+lockSynonym' :: Int -> Int -> PredTable -> [Int] -> State LState ()
+lockSynonym' synNum cur pt visited = do
     state <- get
     let flow = (wrappedFlow state) !! cur
-        found = startswithSyn (tree flow) synNum (synonyms state)
         et_ = et state
+    found <- startswithSyn (tree flow) synNum
     if found then do
         lockFlow flow
     else do
-        let next = (fromJust $ Data.List.lookup cur pt) \\ visited
-        mapM (\x -> lockSynonym synNum x pt (cur:visited)) next
-        return ()
+        let next' = Data.List.lookup cur pt
+        case next' of
+            Nothing -> return ()
+            Just next -> mapM (\x -> lockSynonym' synNum x pt (cur:visited)) (next \\ visited) >>
+                        return ()
 
-startswithSyn :: Stm -> Int -> SynTable -> Bool
-startswithSyn (MOV a _) target table 
-    = (fromJust $ lookup a table) == target
-startswithSyn (EXP (CALL (NAME "malloc") [_, t])) target table 
-    = (fromJust $ lookup t table) == target
-startswithSyn _ _ _ = False
-
+startswithSyn :: Stm -> Int -> State LState Bool
+startswithSyn (MOV a _) target= do
+    state <- get
+    let table = synExpr state
+    case (lookup a table) of
+        Nothing -> return False
+        Just a' -> return $ a' == target
+startswithSyn (EXP (CALL (NAME "malloc") [_, t])) target = do
+    state <- get
+    let table = synExpr state
+    case (lookup t table) of
+        Nothing -> return False
+        Just t' -> return $ t' == target
+startswithSyn _ _ = return False
 
 genSym :: State LState ()
 genSym = do
@@ -229,23 +254,31 @@ genSym = do
     let oneL = group1LayerPotential et_ []
         et_ = et state
         multed = addMult oneL [] et_ 
-        classes = mergeGroups multed et_ 0
---  findSynGroup (TEMP 30) classes
-    fail $ show $  permutateExp classes (MEM (TEMP 30) 4)
-    return()
+        classes = mergeGroups multed et_
+        numberclass = zip [0..] classes
+    mapM putNumberClass numberclass
+    return ()
+
+putNumberClass :: (Int, [Exp]) -> State LState ()
+putNumberClass (i, exps) = do
+    state <- get
+    let synTab = synExpr state
+        newSyn = zip exps (repeat i)
+    put $ state {synExpr = union newSyn synTab}
+    return ()       
 
 addMult :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
 addMult [] acc et = acc
 addMult (thisGroup:remain) acc et = addMult remain (newthis:acc) et
     where
-        multi = nub $ concatMap (permutateExp (remain ++ acc)) thisGroup
+        multi = nub $ concatMap (permutateExp (thisGroup:(remain ++ acc))) thisGroup
         newthis = union multi thisGroup
 
 
-mergeGroups :: [[Exp]] -> EqualTable -> Int -> [[Exp]]
-mergeGroups this et i
-    | this == next || i > 10 = this
-    | otherwise = mergeGroups next et (i+1)
+mergeGroups :: [[Exp]] -> EqualTable -> [[Exp]]
+mergeGroups this et
+    | (length this) == (length next) = this
+    | otherwise = mergeGroups next et
         where
             next = mergeGroupOne this [] et
 
@@ -321,7 +354,7 @@ lockUsed l@(L (EXP c@(CALL _ exps )) defid _) = getExprLocks exps l
 lockUsed l@(L (MOV m@(MEM a size) b@(MEM c size')) defid _) = getExprLocks [a, b, c, m] l 
 
 lockUsed l@(L (MOV m@(MEM (CALL (NAME n) _) _) b) defid _)
-    | n == "#memaccess" = do getLocks [m, b] l 
+    | n == "#memaccess" = getLocks [m, b] l 
 
 lockUsed l@(L (MOV b m@(MEM (CALL (NAME n) _) _)) defid _)
     | n == "#memaccess" = getLocks [m] l 
@@ -452,7 +485,7 @@ testMalloc file = do
     let (stm, s) = runState (translate ast') newTranslateState;
         (qstm, qs') = runState (quadInterface stm) s
         (liveCode, livestate) = runState (eliminateDeadCode qstm) newLState
-    return $ synonyms livestate
+    return $ (synExpr livestate) 
 
 
 testStms file = do 
