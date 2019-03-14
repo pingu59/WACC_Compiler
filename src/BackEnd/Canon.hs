@@ -281,8 +281,9 @@ doStm stm@(MOV (MEM e s) (ESEQ s1 e1)) = do
   s1' <- doStm s1
   reorderStm [e, e1] (\(e:e1_) -> SEQ s1' (MOV (MEM e s) e1))
 
-doStm stm@(MOV (MEM e s) b) = do
-  reorderStm [e, b] (\(e:b_) -> MOV (MEM e s) b)
+doStm stm@(MOV (MEM e s) b)
+  | isOneLayer e && isOneLayer b = return stm
+  | otherwise = reorderStm [e, b] (\(e:b_) -> MOV (MEM e s) b)
 
 doStm (MOV (ESEQ s e) b)
   = doStm (SEQ s (MOV e b))

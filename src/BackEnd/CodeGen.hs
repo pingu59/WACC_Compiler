@@ -67,7 +67,7 @@ userFragsHelper f = do
   let cleanDead = evalState (eliminateDeadCode f) newLState
       constPropStms = evalState (constProp cleanDead) newReachState
       copyPropstms = evalState (copyprop constPropStms) newReachState
-      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState 
+      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
   state' <- get
   let (cseout, cseState) = runState (cse cleanDead2 state') GenKill.newAState
       transState = trans_ cseState -- get the translate state out

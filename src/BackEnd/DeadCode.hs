@@ -15,7 +15,7 @@ import BackEnd.DataFlow hiding (addreTree, contains)
 type PredTable = [(Int, [Int])]
 type SuccTable = [(Int, [Int])]
 type L = [(Int, ([Exp], [Exp]))]
---              deftid mallocId
+type SynTable = [(Exp, Int)]
 type EqualTable = [(Exp, Exp)]
 data LFlow = L {    tree :: Stm,
                     defid :: Int,
@@ -28,10 +28,11 @@ data LState = LState {  idCount :: Int,
                         st :: SuccTable,
                         pt :: PredTable,
                         lock :: [Int],
-                        et :: EqualTable } deriving (Show, Eq)
+                        et :: EqualTable,
+                        synonyms :: SynTable } deriving (Show, Eq)
 
 newLState = LState {idCount = 0, memFlow = [], wrappedFlow = [],
-                    st = [], pt = [], lock = [], et = []} 
+                    st = [], pt = [], lock = [], et = [], synonyms = []} 
 
 newL :: Stm -> State LState LFlow
 newL t = do 
@@ -110,9 +111,9 @@ addEqual flow = do
         otherwise -> return ()
 
 updateEqual :: (Exp, Exp) -> State LState ()
-updateEqual pair = do
+updateEqual (a, b) = do
     state <- get
-    put $ state {et = (pair: (et state))}
+    put $ state {et = ((a, b) : (b, a) : (et state))}
     return ()
 
 eliminateDeadCode :: [Stm] -> State LState [Stm]
@@ -124,6 +125,7 @@ eliminateDeadCode stms = do
     put $ wrappedState {st = succ, pt = pred} 
     -- -- put everything in the state
     genEqual
+    genSym
     mapM (addreTree) (wrappedFlow wrappedState)
     recursiveElim
     clearDeadCode
@@ -165,7 +167,7 @@ elimAll = do
     mapM elimOne [0..(length (wrappedFlow state) - 1)]
     state' <- get
     let locks = lock state'
-    put state {lock = sort $ nub $ locks}
+    put state' {lock = sort $ nub $ locks}
     return ()
 
 elimOne :: Int -> State LState ()
@@ -189,35 +191,159 @@ lockFlow flow = do
 
 notSpecial t = not $ elem t [0, 1, 2, 13, 14, 15]
 
+lockEqualMem :: Exp -> LFlow -> State LState ()
+lockEqualMem m@(MEM a size) flow = do
+    state <- get
+    let syn = lookup (MEM a size) (synonyms state) 
+        pt_ = pt state
+    case syn of
+        Just num -> lockSynonym num (defid flow) pt_ []
+        Nothing -> return ()
+
+lockEqualMem m flow = lockEqualMem (MEM m 1) flow >> lockEqualMem (MEM m 4) flow
+
+lockSynonym :: Int -> Int -> PredTable -> [Int] -> State LState ()
+lockSynonym synNum cur pt visited = do
+    state <- get
+    let flow = (wrappedFlow state) !! cur
+        found = startswithSyn (tree flow) synNum (synonyms state)
+        et_ = et state
+    if found then do
+        lockFlow flow
+    else do
+        let next = (fromJust $ Data.List.lookup cur pt) \\ visited
+        mapM (\x -> lockSynonym synNum x pt (cur:visited)) next
+        return ()
+
+startswithSyn :: Stm -> Int -> SynTable -> Bool
+startswithSyn (MOV a _) target table 
+    = (fromJust $ lookup a table) == target
+startswithSyn (EXP (CALL (NAME "malloc") [_, t])) target table 
+    = (fromJust $ lookup t table) == target
+startswithSyn _ _ _ = False
+
+
+genSym :: State LState ()
+genSym = do
+    state <- get
+    let oneL = group1LayerPotential et_ []
+        et_ = et state
+        multed = addMult oneL [] et_ 
+        classes = mergeGroups multed et_ 0
+--  findSynGroup (TEMP 30) classes
+    fail $ show $  permutateExp classes (MEM (TEMP 30) 4)
+    return()
+
+addMult :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
+addMult [] acc et = acc
+addMult (thisGroup:remain) acc et = addMult remain (newthis:acc) et
+    where
+        multi = nub $ concatMap (permutateExp (remain ++ acc)) thisGroup
+        newthis = union multi thisGroup
+
+
+mergeGroups :: [[Exp]] -> EqualTable -> Int -> [[Exp]]
+mergeGroups this et i
+    | this == next || i > 10 = this
+    | otherwise = mergeGroups next et (i+1)
+        where
+            next = mergeGroupOne this [] et
+
+-- Detect and 'substitute' innterTemps
+mergeGroupOne :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
+mergeGroupOne [] b et = b
+mergeGroupOne a@(thisGroup : remain) b et
+    = mergeGroupOne remain (newGroup : db) et
+        where
+            (sremain, dremain) = partition (containsSame thisGroup) remain
+            (sb, db) = partition (containsSame thisGroup) b
+            tomerge = union (concat sb) (concat sremain)
+            newGroup = union tomerge thisGroup
+
+containsSame :: [Exp] -> [Exp] -> Bool
+containsSame [] b = False
+containsSame (a:as) b = (or (map (same a) b)) || containsSame as b            
+
+group1LayerPotential :: EqualTable -> [[Exp]] -> [[Exp]]
+group1LayerPotential [] acc = acc
+group1LayerPotential et@((a, b) : xs) acc = group1LayerPotential newEt (newGroup : acc)
+    where
+        newGroup = genPotential et a [a, b]
+        newEt = [(x, y) | (x, y) <- et, not (elem x newGroup)]
+
+genPotential :: EqualTable -> Exp -> [Exp] -> [Exp]
+genPotential et x acc
+    | newP == [] = acc
+    | otherwise = nub $ concatMap (\x -> genPotential et x (acc ++ newP)) newP
+    where
+        allP = [ y | (x', y) <- et, same x x']
+        newP = filter (\x -> not $ elem x acc) allP
+
+--              groupTable
+permutateExp :: [[Exp]]-> Exp -> [Exp] 
+permutateExp gt (MEM (TEMP t) size) = map (\x -> (MEM x size)) potential
+    where
+        potential = findSynGroup (TEMP t) gt
+
+permutateExp gt (BINEXP rop (TEMP t1) (TEMP t2)) = map (\(x1, x2) -> (BINEXP rop x1 x2)) final
+    where
+        potential1 = findSynGroup (TEMP t1) gt
+        potential2 = findSynGroup (TEMP t2) gt
+        permTwo = concatMap (\x-> zip (repeat x) potential2) potential1
+                 ++ concatMap (\x-> zip (repeat x) potential1) potential2
+        final = nub permTwo
+
+permutateExp gt (BINEXP rop (TEMP t) a) = map (\x -> (BINEXP rop x a)) potential
+    where 
+        potential = findSynGroup (TEMP t) gt
+
+permutateExp gt (BINEXP rop a (TEMP t)) = map (\x -> (BINEXP rop a x)) potential
+    where
+        potential = findSynGroup (TEMP t) gt
+
+permutateExp _ x = [x]
+
+findSynGroup exp gt =  concat [ x |x <- gt, elem exp x]
+
+same :: Exp -> Exp -> Bool
+same (MEM (CALL (NAME "#memaccess") [CONSTI i11, CONSTI i12]) s1) (MEM (CALL (NAME "#memaccess") [CONSTI i21, CONSTI i22]) s2) 
+    = (i11 -i12) == (i21 - i22) && s1 == s2
+same (MEM a s1) (MEM b s2) = same a b && s1 == s2
+same (BINEXP _ a1 b1) (BINEXP _ a2 b2) = (same a1 a1) && (same b1 b2)
+same exp1 exp2 = exp1 == exp2
+
 lockUsed :: LFlow -> State LState ()
 lockUsed l@(L (EXP m@(CALL (NAME n) _ )) _ _) 
     | n == "#memaccess" = getLocks [m] l
 
 lockUsed l@(L (EXP c@(CALL _ exps )) defid _) = getExprLocks exps l
 
+lockUsed l@(L (MOV m@(MEM a size) b@(MEM c size')) defid _) = getExprLocks [a, b, c, m] l 
+
 lockUsed l@(L (MOV m@(MEM (CALL (NAME n) _) _) b) defid _)
-    | n == "#memaccess" = getLocks [m, b] l
+    | n == "#memaccess" = do getLocks [m, b] l 
 
 lockUsed l@(L (MOV b m@(MEM (CALL (NAME n) _) _)) defid _)
-    | n == "#memaccess" = getLocks [m] l
+    | n == "#memaccess" = getLocks [m] l 
+        
+lockUsed l@(L (MOV m@(MEM (TEMP t) size) b) defid _) = getExprLocks [b, (TEMP t)] l 
+lockUsed l@(L (MOV m@(MEM a _) b) defid _) = getExprLocks [a, b] l 
 
-lockUsed l@(L (MOV (MEM (TEMP t) size) b) defid _) = getExprLocks [b] l
-
-lockUsed l@(L (MOV (MEM a _) b) defid _) = getExprLocks [a, b] l
+lockUsed l@(L (MOV (TEMP t) m@(MEM _ _)) defid _) = getExprLocks [m] l
 
 lockUsed l@(L (MOV (TEMP t) m) defid _) = getExprLocks [m] l 
 
-lockUsed l@(L (CJUMP rop a b t f) defid _) =  getExprLocks [a, b] l >> lockLable [t, f]
+lockUsed l@(L (CJUMP rop a b t f) defid _) = getExprLocks [a, b] l >> lockLable [t, f]
 
 lockUsed l@(L (JUMP _ ns) defid _) = lockLable ns
 
 lockUsed _ = return ()
 
-genMallocTable :: State LState ()
-genMallocTable = undefined
-
 getExprLocks :: [Exp] -> LFlow -> State LState ()
-getExprLocks exps l = mapM (\x -> getExprLocks' x l) exps >> return ()
+getExprLocks exps l 
+    = mapM (\x -> getExprLocks' x l) exps >> 
+      mapM (\x -> lockEqualMem x l) exps >>
+      return ()
 
 getExprLocks' :: Exp -> LFlow -> State LState ()
 getExprLocks' (BINEXP bop a b) l = getExprLocks' a l>> getExprLocks' b l
@@ -298,6 +424,7 @@ isFuncLab (LABEL n) = not $ "label_" `isPrefixOf` n
 isFuncLab _ = False
 
 sideEffect :: LFlow -> Bool
+sideEffect l@(L (MOV (MEM _ _) (MEM _ _)) _ _) = True
 sideEffect l@(L (MOV (TEMP t) _) _ _)
     | not $ notSpecial t = True
 sideEffect l@(L (MOV t (CALL (NAME n) exps)) _ _)
@@ -315,8 +442,7 @@ testDeadCode file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
-        (qstm, qs') = runState (quadStm stm) s
-        (stms, s') = runState (transform qstm) qs'
+        (stms, s') = runState (quadInterface stm) s
         liveCode = evalState (eliminateDeadCode stms) newLState
     return liveCode
 
@@ -324,19 +450,17 @@ testMalloc file = do
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
-        (qstm, qs') = runState (quadStm stm) s
-        (stms, s') = runState (transform qstm) qs'
-        (liveCode, livestate) = runState (eliminateDeadCode stms) newLState
-    return $ pt livestate
+        (qstm, qs') = runState (quadInterface stm) s
+        (liveCode, livestate) = runState (eliminateDeadCode qstm) newLState
+    return $ synonyms livestate
 
 
 testStms file = do 
     ast <- parseFile file
     ast' <- analyzeAST ast
     let (stm, s) = runState (translate ast') newTranslateState;
-        (qstm, qs') = runState (quadStm stm) s
-        (stms, s') = runState (transform qstm) qs'
+        (qstm, qs') = runState (quadInterface stm) s
         -- (liveCode, livestate) = runState (eliminateDeadCode stms) newLState
-    return $ zip stms [0..]
+    return $ zip qstm [0..]
 
 testStm = [(MOV (TEMP 2) (CONSTI 2)),(MOV (TEMP 1) (CONSTI 1)) ,(EXP (CALL (NAME "exit") [(TEMP 1)]))]

@@ -538,10 +538,11 @@ module BackEnd.Munch where
   munchStm x = do
     m <- condStm x
     return $ m AL
-  
+
   -- ALLOW the suffix + cond of a load / store to change
   suffixStm :: Stm -> State TranslateState (Cond -> [ASSEM.Instr])
   suffixStm (IR.MOV (MEM me t') e) = do -- STR
+    state <- get
     (i, t) <- munchExp e
     (l, ts, op) <- munchMem me
     let suff = if t' == 4 then W else B_

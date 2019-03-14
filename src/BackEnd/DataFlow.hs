@@ -73,13 +73,28 @@ testConstProp file = do
   let (stm, s) = runState (translate ast') newTranslateState;
       (qstm, qs') = runState (quadStm stm) s
       (stms, s') = runState (transform qstm) qs'
-      constP = evalState (constProp stms) newReachState
+      --constP = evalState (constProp stms) newReachState
   return stms
 
 quadInterface stm = do
     qstm <- quadStm stm
     stms <- transform qstm
-    return $ stms
+    stms' <- checkLinearAll stms
+    return $ stms'
+
+checkLinearAll stms = do
+    c <- mapM checkLinearOne stms
+    return $ concat c 
+
+checkLinearOne (MOV (MEM e@(ESEQ a r) s) b) = do
+    all <- checkLinearAll [a, (MOV (MEM r s) b)]
+    return all
+
+checkLinearOne (MOV b (MEM e@(ESEQ a r) s)) = do
+    all <- checkLinearAll [a, (MOV b (MEM r s))]
+    return all
+
+checkLinearOne x = return [x]
 
 -- constant propagation
 constProp :: [Stm] -> State ReachState [Stm]
@@ -95,6 +110,7 @@ constNewStms flows = map tree flows
 constPropAll :: State ReachState [()]
 constPropAll = do
   state <- get
+  mapM (addreTree) (wrappedFlow state)
   mapM constPropOne [0..(length (wrappedFlow state) - 1)]
 
 constPropOne :: Int -> State ReachState ()
@@ -103,28 +119,84 @@ constPropOne index = do
   let allFlow = wrappedFlow state
       aFlow = allFlow !! index
       stm = tree aFlow
-      usedTemp = getRegStm stm -- registers used in this stm
+  case stm of
+    --load const from stack
+    (MOV (TEMP t) (MEM (CALL (NAME "#memaccess") [(CONSTI size),(CONSTI sp)]) _)) -> do
+       findStack index (sp - size)
+    otherwise -> do
+      let usedTemp = getRegStm stm -- registers used in this stm
       --for usedTemp
       --find number of definition of t with const c in the inDef list
       --if there is only one, replace t with c
-  bools <- mapM (findConst index) usedTemp
-  newState <- get
-  let newFlow = (wrappedFlow newState) !! index
-      foldedStm = foldStm (tree newFlow)
-  bool <- updateReachFlow $ newFlow {tree = foldedStm}
-  return ()
+      bools <- mapM (findConst index) usedTemp
+      --move fold to findConst?? no
+      newState <- get
+      let newFlow = (wrappedFlow newState) !! index
+      folded <- foldStm (tree newFlow)
+      case folded of
+        Nothing -> do --cannot propagate
+          bool <- updateReachFlow $ newFlow {tree = head (reTree newFlow)}
+          return ()
+        otherwise -> do
+          bool <- updateReachFlow $ newFlow {tree = (fromJust folded)}
+          return ()
 
-foldStm :: Stm -> Stm
-foldStm (MOV t e) = MOV t (foldExp e)
-foldStm s = s
 
-foldExp :: Exp -> Exp
-foldExp (BINEXP PLUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 + i2)
-foldExp (BINEXP MINUS (CONSTI i1) (CONSTI i2)) = CONSTI (i1 - i2)
-foldExp (BINEXP MUL (CONSTI i1) (CONSTI i2)) = CONSTI (i1 * i2)
-foldExp (BINEXP DIV (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `div` i2)
-foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2)) = CONSTI (i1 `mod` i2)
-foldExp e = e
+--find the constant on stack
+findStack :: Int -> Int -> State ReachState ()
+findStack index pos = do
+  state <- get
+  let aFlow = (wrappedFlow state) !! index
+      stm = tree aFlow
+      inDef =  fst $ snd ((rd state) !! index)
+      --stms = map tree (map (wrappedFlow state !!) inDef) -- stms in inDef
+      stms = map tree (wrappedFlow state)
+      -- predIndex = snd $ (genReachPred (wrappedFlow state)) !! index
+      -- stms = map tree (map (wrappedFlow state !!) predIndex)
+      consts = map fromJust $ (filter (/= Nothing) (map (onStack pos) stms))
+  case consts of
+    [aConst] -> do
+        let newStm = replaceStack stm aConst
+        bool <- updateReachFlow $ aFlow {tree = newStm}
+        return ()
+    otherwise -> return ()
+
+replaceStack :: Stm -> Int -> Stm
+replaceStack (MOV (TEMP t) (MEM (CALL (NAME "#memaccess") [(CONSTI size), (CONSTI sp)]) _)) c = (MOV (TEMP t) (CONSTI c))
+replaceStack s _ = s
+
+onStack :: Int -> Stm -> Maybe Int
+onStack pos (MOV (MEM (CALL (NAME "#memaccess") [(CONSTI size), (CONSTI sp)]) _) (CONSTI c))
+  | pos == sp - size = Just c
+  | otherwise = Nothing
+onStack _ _ = Nothing
+
+foldStm :: Stm -> State ReachState (Maybe Stm)
+foldStm s@(MOV t e) = do
+  let e' =  foldExp e
+  case e' of
+    Nothing -> return Nothing
+    Just (CONSTI c) -> if (check c) then return (Just (MOV t (CONSTI c)))
+                        else return Nothing
+    otherwise -> return $ Just s
+foldStm s = return $ Just s
+
+check c = (c <= (2^31) - 1) && (c >= (-2 ^ 31))
+
+foldExp :: Exp -> Maybe Exp
+foldExp (BINEXP PLUS (CONSTI i1) (CONSTI i2)) = Just (CONSTI (i1 + i2))
+foldExp (BINEXP MINUS (CONSTI i1) (CONSTI i2)) = Just (CONSTI (i1 - i2))
+foldExp (BINEXP MUL (CONSTI i1) (CONSTI i2)) = Just (CONSTI (i1 * i2))
+foldExp (BINEXP DIV (CONSTI i1) (CONSTI i2))
+  | i2 == 0 = Nothing
+  | i1 * i2 > 0 =  Just (CONSTI (div i1 i2))
+  | otherwise =  Just (CONSTI (div i1 (negate i2)))
+foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2))
+   | i2 == 0 = Nothing
+  | i1 * i2 > 0 =  Just (CONSTI (mod i1 i2))
+  | otherwise =  Just (CONSTI (mod i1 (negate i2)))
+foldExp (CALL (NAME "neg") ((CONSTI i):rest)) = Just (CONSTI (negate i))
+foldExp e =  Just e
 
 findConst :: Int -> Temp -> State ReachState Bool
 findConst index t = do
@@ -136,8 +208,9 @@ findConst index t = do
     (1, c) -> do
       let flows = wrappedFlow state
           aFlow = flows !! index
-          newStm = replaceStm' (tree aFlow) t c in
-       updateReachFlow $ aFlow {tree = newStm} --registers has been replaced with const
+          newStm = replaceStm' (tree aFlow) t c
+          --registers has been replaced with const
+      updateReachFlow $ aFlow {tree = newStm}
     otherwise -> return False
 
 
@@ -147,7 +220,6 @@ findConst' ((MOV (TEMP t1) (CONSTI i)):ds) num c t
   | t1 == t = findConst' ds (num + 1) i t
   | otherwise = findConst' ds num c t
 findConst' (d:ds) num c t = findConst' ds num c t
-
 
 replaceStm' :: Stm -> Temp.Temp -> Int -> Stm
 replaceStm' (MOV (TEMP t1) e) t c = MOV (TEMP t1) (replaceExp t c e)
@@ -770,31 +842,33 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+putBackMemAccess stms = stms -- putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
 
-putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
-putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
-  = putBackMemAccess' newref rest
-    where
-        newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
-        to = (length ref - (length rest))
-        (from, sub) = findTemp (TEMP t) ref
+-- putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
+-- putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
+--   = putBackMemAccess' newref rest
+--     where
+--         newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
+--         to = (length ref - (length rest))
+--         (from, sub) = findTemp (TEMP t) ref
 
-putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
-  = putBackMemAccess' newref rest
-    where
-        newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
-        to = (length ref - (length rest))
-        (from, sub) = findTemp (TEMP t) ref
-putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
-    | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
-putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
-putBackMemAccess' ref [] = concatMap snd ref
+-- putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
+--   = putBackMemAccess' newref rest
+--     where
+--         newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
+--         to = (length ref - (length rest))
+--         (from, sub) = findTemp (TEMP t) ref
+-- putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
+-- putBackMemAccess' ref [] = concatMap snd ref
 
-updateRef i stm ref= [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
+-- updateRef i stm ref
+--     | i > 0 = [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
+--     | otherwise = ref
 
-findTemp :: Exp -> [(Int, [Stm])] -> (Int, Exp)
-findTemp temp [] = undefined
-findTemp temp ((num, [(MOV a b)]):xs)
-    | a == temp = (num, b)
-findTemp temp (x : xs) = findTemp temp xs
+-- findTemp :: Exp -> [(Int, [Stm])] -> (Int, Exp)
+-- findTemp temp [] = undefined
+-- findTemp temp ((num, [(EXP (CALL (NAME "malloc") [a, b]))] ):xs)
+--     | b == temp = (-1, b) -- should not delete
+-- findTemp temp ((num, [(MOV a b)]):xs)
+--     | a == temp = (num, b)
+-- findTemp temp (x : xs) = findTemp temp xs
