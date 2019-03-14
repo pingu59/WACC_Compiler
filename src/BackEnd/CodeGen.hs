@@ -26,8 +26,9 @@ instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
   let --cleanDead = evalState (eliminateDeadCode stms) newLState
+      --constPropStms = evalState (constProp stms) newReachState
+      --copyPropstms = evalState (copyprop stms) newReachState
       constPropStms = evalState (constProp stms) newReachState
-      --copyPropstms = evalState (copyprop constPropStms) newReachState
       --cleanDead2 = evalState (eliminateDeadCode constPropStms) newLState
   state <- get
   let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
@@ -40,7 +41,7 @@ instrGen ast = do
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
   else do
-    let copyPropStms' = evalState (copyprop cseout) newReachState
+    let copyPropStms' = evalState (copyprop constPropStms) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
     code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropStms') --
     builtInFrags' <- builtInFrags
