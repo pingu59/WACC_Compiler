@@ -25,24 +25,24 @@ instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[As
 instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
-  let cleanDead = evalState (eliminateDeadCode stms) newLState
-      constPropStms = evalState (constProp cleanDead) newReachState
-      copyPropstms = evalState (copyprop constPropStms) newReachState
-      cleanDead2 = evalState (eliminateDeadCode copyPropstms) newLState
+  let --cleanDead = evalState (eliminateDeadCode stms) newLState
+      constPropStms = evalState (constProp stms) newReachState
+      --copyPropstms = evalState (copyprop constPropStms) newReachState
+      --cleanDead2 = evalState (eliminateDeadCode constPropStms) newLState
   state <- get
-  let (cseout, cseState) = runState (cse cleanDead2 state) GenKill.newAState
+  let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
-  if(cseout == copyPropStms) then do
+  if(cseout == constPropStms) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess cseout) --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
   else do
     let copyPropStms' = evalState (copyprop cseout) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess copyPropStms') --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropStms') --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')

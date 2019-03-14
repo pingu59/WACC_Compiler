@@ -73,8 +73,8 @@ testConstProp file = do
   let (stm, s) = runState (translate ast') newTranslateState;
       (qstm, qs') = runState (quadStm stm) s
       (stms, s') = runState (transform qstm) qs'
-      --constP = evalState (constProp stms) newReachState
-  return stms
+      constP = evalState (constProp stms) newReachState
+  return constP
 
 quadInterface stm = do
     qstm <- quadStm stm
@@ -140,8 +140,8 @@ findStack index pos = do
       -- stms = map tree (map (wrappedFlow state !!) predIndex)
       consts = map fromJust $ (filter (/= Nothing) (map (onStack pos) stms))
   case consts of
-    [aConst] -> do
-        let newStm = replaceStack stm aConst
+    [(c, True)] -> do
+        let newStm = replaceStack stm c
         bool <- updateReachFlow $ aFlow {tree = newStm}
         return ()
     otherwise -> return ()
@@ -150,9 +150,12 @@ replaceStack :: Stm -> Int -> Stm
 replaceStack (MOV (TEMP t) (MEM (CALL (NAME "#memaccess") [(CONSTI size), (CONSTI sp)]) _)) c = (MOV (TEMP t) (CONSTI c))
 replaceStack s _ = s
 
-onStack :: Int -> Stm -> Maybe Int
+onStack :: Int -> Stm -> Maybe (Int,Bool)
 onStack pos (MOV (MEM (CALL (NAME "#memaccess") [(CONSTI size), (CONSTI sp)]) _) (CONSTI c))
-  | pos == sp - size = Just c
+  | pos == sp - size = Just (c, True) -- find one const
+  | otherwise = Nothing
+onStack pos (MOV (MEM (CALL (NAME "#memaccess") [(CONSTI size), (CONSTI sp)]) _) e)
+  | pos == sp - size = Just (0, False) -- if find another stm that store on stack, cannot propagate
   | otherwise = Nothing
 onStack _ _ = Nothing
 
@@ -166,7 +169,7 @@ foldStm s@(MOV t e) = do
     otherwise -> return $ Just s
 foldStm s = return $ Just s
 
-check c = (c <= (2^31) - 1) && (c >= (-2 ^ 31))
+check c = (c <= (2^31) - 1) && (c >= (negate (2 ^ 31)))
 
 foldExp :: Exp -> Maybe Exp
 foldExp (BINEXP PLUS (CONSTI i1) (CONSTI i2)) = Just (CONSTI (i1 + i2))
@@ -177,10 +180,10 @@ foldExp (BINEXP DIV (CONSTI i1) (CONSTI i2))
   | i1 * i2 > 0 =  Just (CONSTI (div i1 i2))
   | otherwise =  Just (CONSTI (div i1 (negate i2)))
 foldExp (BINEXP MOD (CONSTI i1) (CONSTI i2))
-   | i2 == 0 = Nothing
+  | i2 == 0 = Nothing
   | i1 * i2 > 0 =  Just (CONSTI (mod i1 i2))
   | otherwise =  Just (CONSTI (mod i1 (negate i2)))
-foldExp (CALL (NAME "neg") ((CONSTI i):rest)) = Just (CONSTI (negate i))
+foldExp (CALL (NAME "#neg") ((CONSTI i):rest)) = Just (CONSTI (negate i))
 foldExp e =  Just e
 
 findConst :: Int -> Temp -> State ReachState Bool
@@ -208,7 +211,7 @@ findConst' (d:ds) num c t = findConst' ds num c t
 
 replaceStm' :: Stm -> Temp.Temp -> Int -> Stm
 replaceStm' (MOV (TEMP t1) e) t c = MOV (TEMP t1) (replaceExp t c e)
-replaceStm' (MOV (MEM e1 i) e2) t c = MOV (MEM (replaceExp t c e1) i) (replaceExp t c e2)
+replaceStm' (MOV (MEM e1 i) e2) t c = MOV (MEM e1 i) (replaceExp t c e2)
 replaceStm' stm@(MOV e (TEMP t1)) t c
   | t1 == t = MOV e (CONSTI c)
   | otherwise = stm
@@ -220,7 +223,7 @@ replaceStm' s@(EXP (CALL f@(NAME n) exps)) t c
 replaceStm' stm _ _ = stm
 
 cannotReplace :: Temp.Label -> Bool
-cannotReplace n = elem n ["#p_print_int"]
+cannotReplace n = elem n ["#p_print_int", "#p_check_null_pointer"]
 
 replaceExp :: Temp.Temp -> Int -> Exp -> Exp
 replaceExp t c e@(TEMP t1)
@@ -827,26 +830,26 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+putBackMemAccess stms = stms -- putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
 
-putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
-putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
-  = putBackMemAccess' newref rest
-    where
-        newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
-        to = (length ref - (length rest))
-        (from, sub) = findTemp (TEMP t) ref
-
-putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
-  = putBackMemAccess' newref rest
-    where
-        newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
-        to = (length ref - (length rest))
-        (from, sub) = findTemp (TEMP t) ref
-putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
-    | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
-putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
-putBackMemAccess' ref [] = concatMap snd ref
+-- putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
+-- putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
+--   = putBackMemAccess' newref rest
+--     where
+--         newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
+--         to = (length ref - (length rest))
+--         (from, sub) = findTemp (TEMP t) ref
+--
+-- putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
+--   = putBackMemAccess' newref rest
+--     where
+--         newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
+--         to = (length ref - (length rest))
+--         (from, sub) = findTemp (TEMP t) ref
+-- putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
+--     | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
+-- putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
+-- putBackMemAccess' ref [] = concatMap snd ref
 
 updateRef i stm ref= [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]
 
