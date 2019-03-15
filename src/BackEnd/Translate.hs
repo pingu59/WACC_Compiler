@@ -530,7 +530,13 @@ translateRead :: Type -> [Exp] -> State TranslateState IExp
 translateRead TInt [MEM a _] = do
   addBuiltIn id_p_read_int
   callp "#p_read_int" [a]
+translateRead TInt [a] = do
+  addBuiltIn id_p_read_int
+  callp "#p_read_int" [a]
 translateRead TChar [MEM a _] = do
+  addBuiltIn id_p_read_char
+  callp "#p_read_char" [a]
+translateRead TChar [a] = do
   addBuiltIn id_p_read_char
   callp "#p_read_char" [a]
 
