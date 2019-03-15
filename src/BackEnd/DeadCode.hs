@@ -167,7 +167,7 @@ recursiveElim = do
     state' <- get
     let oldLock = lock state
         newLock = lock state'
-    if oldLock == newLock then
+    if length oldLock == length newLock then
         return ()
     else
         recursiveElim
@@ -257,7 +257,7 @@ genSym = do
     let oneL = group1LayerPotential et_ []
         et_ = et state
         multed = addMult oneL et_ 0
-        classes = mergeGroups multed et_
+        classes = mergeGroups multed et_ 0
         numberclass = zip [0..] classes
     mapM putNumberClass numberclass
     return ()
@@ -278,8 +278,6 @@ addMult this et i
         thislen = sum (map length this)
         nextlen = sum (map length next)
         next = addMultOne this [] et
-        maximum = log_ (length et)
-        log_ x = if (odd x) then 0 else (floor . logBase 2.0 . fromIntegral) x 
 
 addMultOne :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
 addMultOne [] acc et = acc
@@ -288,12 +286,14 @@ addMultOne (thisGroup:remain) acc et = addMultOne remain (newthis:acc) et
         multi = nub $ concatMap (permutateExp (thisGroup:(remain ++ acc))) thisGroup
         newthis = union multi thisGroup
 
-mergeGroups :: [[Exp]] -> EqualTable -> [[Exp]]
-mergeGroups this et
-    | (length this) == (length next) = this
-    | otherwise = mergeGroups next et
+mergeGroups :: [[Exp]] -> EqualTable -> Int -> [[Exp]]
+mergeGroups this et i
+    | (length this) == (length next) || i > maximum = this
+    | otherwise = mergeGroups next et (i + 1)
         where
             next = mergeGroupOne this [] et
+            maximum = log_ (length et)
+            log_ x = if (odd x) then 0 else (floor . logBase 2.0 . fromIntegral) x 
 
 -- Detect and 'substitute' innterTemps
 mergeGroupOne :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
@@ -393,7 +393,7 @@ lockUsed _ = return ()
 getExprLocks :: [Exp] -> LFlow -> State LState ()
 getExprLocks exps l 
     = mapM (\x -> getExprLocks' x l) exps >> 
-      mapM (\x -> lockEqualMem x l) exps >>
+--      mapM (\x -> lockEqualMem x l) exps >>
       return ()
 
 getExprLocks' :: Exp -> LFlow -> State LState ()
