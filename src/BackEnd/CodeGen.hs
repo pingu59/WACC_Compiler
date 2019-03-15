@@ -29,19 +29,12 @@ instrGen ast = do
       cleanDead = evalState (eliminateDeadCode constPropStms) newLState
   --    copyPropstms = evalState (copyprop constPropStms) newReachState
   -- state <- get
-  -- let (cseout, cseState) = runState (cse cleanDead state) GenKill.newAState
-  --    transState = trans_ cseState -- get the translate state out
-  -- put transState
-  -- if(True) then do
-  --   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-  --   code <- liftM Munch.optimizeInstrs (Munch.munchmany cleanDead) --
-  --   builtInFrags' <- builtInFrags
-  --   dataFrags' <- dataFrags
-  --   return (userFrags' ++ [code], dataFrags', builtInFrags')
-  -- else do
-  --   let copyPropStms' = evalState (copyprop cleanDead) newReachState
+  -- let (cseout, cseState) = runState (cse cleanDead state) GenKill.newAState  
+  --     transState = trans_ cseState -- get the translate state out
+  -- put $ transState
   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-  code <- liftM Munch.optimizeInstrs (Munch.munchmany cleanDead) --
+  code <- liftM Munch.optimizeInstrs (Munch.munchmany cleanDead)
+  -- uncomment the lines above and change this cleanDead ↑ to cseout to see the CSE optimisation
   builtInFrags' <- builtInFrags
   dataFrags' <- dataFrags
   return (userFrags' ++ [code], dataFrags', builtInFrags')
