@@ -32,16 +32,16 @@ instrGen ast = do
   let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
-  if(cseout == copyPropStms) then do
+  if(cseout == constPropStms) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess cseout) --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
   else do
-    let copyPropStms' = evalState (copyprop cseout) newReachState
+    let copyPropStms' = evalState (copyprop constPropStms) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess copyPropStms') --
+    code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropStms') --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
@@ -57,7 +57,6 @@ userFrags = do
   state <- get
   let userFrags' = map (\(Frame.PROC stm _) -> stm) (Translate.procFrags state)
   f <- mapM quadInterface userFrags'
-  --fail $ show f
   f'<- mapM userFragsHelper f
   return f'
 
