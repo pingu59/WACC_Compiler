@@ -285,6 +285,7 @@ quadStm (SEQ s1 s2) = do
     s2' <- quadStm s2
     return $ SEQ s1' s2'
 
+{-new-}
 quadStm (MOV e1 e2) = do
   e1' <- quadExp e1
   e2' <- quadExp e2

@@ -27,19 +27,19 @@ instrGen ast = do
   stms <- DataFlow.quadInterface stm
   let --copyPropstms = evalState (copyprop stms) newReachState
       constPropStms = evalState (constProp stms) newReachState
-      --cleanDead2 = evalState (eliminateDeadCode constPropStms) newLState
+      cleanDead2 = evalState (eliminateDeadCode constPropStms) newLState
   state <- get
-  let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
+  let (cseout, cseState) = runState (cse cleanDead2 state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
-  if(cseout == constPropStms) then do
+  if(cseout == cleanDead2) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
     code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
     builtInFrags' <- builtInFrags
     dataFrags' <- dataFrags
     return (userFrags' ++ [code], dataFrags', builtInFrags')
   else do
-    let copyPropStms' = evalState (copyprop constPropStms) newReachState
+    let copyPropStms' = evalState (copyprop cleanDead2) newReachState
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
     code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropStms') --
     builtInFrags' <- builtInFrags
