@@ -141,7 +141,8 @@ eliminateDeadCode stms = do
         -- put everything in the state
         mapM (addreTree) (wrappedFlow wrappedState)
         --    genEqual
-        --    genSym
+        --    genSym   
+        -- uncomment above to allow analysing memory
         recursiveElim
         clearDeadCode
         state' <- get
@@ -281,7 +282,7 @@ putNumberClass (i, exps) = do
     
 addMult :: [[Exp]] -> EqualTable -> Int -> [[Exp]]
 addMult this et i
-    | thislen == nextlen || i > 2 = next
+    | thislen == nextlen = next
     | otherwise = addMult next et (i + 1)
     where
         thislen = sum (map length this)
@@ -402,7 +403,7 @@ lockUsed _ = return ()
 getExprLocks :: [Exp] -> LFlow -> State LState ()
 getExprLocks exps l 
     = mapM (\x -> getExprLocks' x l) exps >> 
---      mapM (\x -> lockEqualMem x l) exps >>
+--      mapM (\x -> lockEqualMem x l) exps >>  UNCOMMENT TO ALLOW ANALYZE MEMORY
       return ()
 
 getExprLocks' :: Exp -> LFlow -> State LState ()

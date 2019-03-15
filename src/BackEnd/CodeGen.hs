@@ -25,26 +25,26 @@ instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[As
 instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
-  let cleanDead = evalState (eliminateDeadCode stms) newLState
-      constPropStms = evalState (constProp cleanDead) newReachState
-      copyPropstms = evalState (copyprop constPropStms) newReachState
-  state <- get
-  let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
-      transState = trans_ cseState -- get the translate state out
-  put transState
-  if(cseout == constPropStms) then do
-    userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany cseout) --
-    builtInFrags' <- builtInFrags
-    dataFrags' <- dataFrags
-    return (userFrags' ++ [code], dataFrags', builtInFrags')
-  else do
-    let copyPropStms' = evalState (copyprop constPropStms) newReachState
-    userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
-    code <- liftM Munch.optimizeInstrs (Munch.munchmany copyPropStms') --
-    builtInFrags' <- builtInFrags
-    dataFrags' <- dataFrags
-    return (userFrags' ++ [code], dataFrags', builtInFrags')
+  let constPropStms = evalState (constProp stms) newReachState
+      cleanDead = evalState (eliminateDeadCode constPropStms) newLState
+  --    copyPropstms = evalState (copyprop constPropStms) newReachState
+  -- state <- get
+  -- let (cseout, cseState) = runState (cse cleanDead state) GenKill.newAState
+  --    transState = trans_ cseState -- get the translate state out
+  -- put transState
+  -- if(True) then do
+  --   userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
+  --   code <- liftM Munch.optimizeInstrs (Munch.munchmany cleanDead) --
+  --   builtInFrags' <- builtInFrags
+  --   dataFrags' <- dataFrags
+  --   return (userFrags' ++ [code], dataFrags', builtInFrags')
+  -- else do
+  --   let copyPropStms' = evalState (copyprop cleanDead) newReachState
+  userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
+  code <- liftM Munch.optimizeInstrs (Munch.munchmany cleanDead) --
+  builtInFrags' <- builtInFrags
+  dataFrags' <- dataFrags
+  return (userFrags' ++ [code], dataFrags', builtInFrags')
 
 
 dataFrags :: State Translate.TranslateState [[Assem.Instr]]
