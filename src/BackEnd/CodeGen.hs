@@ -25,9 +25,7 @@ instrGen :: ProgramF () -> State Translate.TranslateState ([[Assem.Instr]], [[As
 instrGen ast = do
   stm <- Translate.translate ast
   stms <- DataFlow.quadInterface stm
-  let --cleanDead = evalState (eliminateDeadCode stms) newLState
-      --constPropStms = evalState (constProp stms) newReachState
-      --copyPropstms = evalState (copyprop stms) newReachState
+  let --copyPropstms = evalState (copyprop stms) newReachState
       constPropStms = evalState (constProp stms) newReachState
       --cleanDead2 = evalState (eliminateDeadCode constPropStms) newLState
   state <- get
