@@ -393,7 +393,7 @@ lockUsed _ = return ()
 getExprLocks :: [Exp] -> LFlow -> State LState ()
 getExprLocks exps l 
     = mapM (\x -> getExprLocks' x l) exps >> 
---      mapM (\x -> lockEqualMem x l) exps >>
+      mapM (\x -> lockEqualMem x l) exps >>
       return ()
 
 getExprLocks' :: Exp -> LFlow -> State LState ()
