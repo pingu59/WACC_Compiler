@@ -527,12 +527,12 @@ translateFree (TArray _) exprs = callp "#p_free_array" exprs
 translateFree TStr exprs = callp "#p_free_array" exprs
 
 translateRead :: Type -> [Exp] -> State TranslateState IExp
-translateRead TInt exps = do
+translateRead TInt [MEM a _] = do
   addBuiltIn id_p_read_int
-  callp "#p_read_int" exps
-translateRead TChar exps = do
+  callp "#p_read_int" [a]
+translateRead TChar [MEM a _] = do
   addBuiltIn id_p_read_char
-  callp "#p_read_char" exps
+  callp "#p_read_char" [a]
 
 translatePrint :: Type -> [Exp] -> State TranslateState IExp
 translatePrint TChar exps = callp "#p_putchar" exps
