@@ -32,7 +32,6 @@ instrGen ast = do
   let (cseout, cseState) = runState (cse constPropStms state) GenKill.newAState
       transState = trans_ cseState -- get the translate state out
   put transState
-  fail $ show $ putBackMemAccess cseout
   if(cseout == copyPropStms) then do
     userFrags' <- liftM (map Munch.optimizeInstrs) userFrags
     code <- liftM Munch.optimizeInstrs (Munch.munchmany $ putBackMemAccess cseout) --

@@ -584,17 +584,15 @@ translateNewPair (TPair t1 t2) [f, s] = do
   return $ Ex (ESEQ (SEQ malloc1 $ SEQ strPairAddr $ SEQ malloc2 $ SEQ savefst $ SEQ strfstaddr 
                       $ SEQ malloc3 $ SEQ savesnd $ SEQ strsndaddr strpaironstack) (TEMP taddr)) 
 
-
 translatePairAccess :: Type -> [Exp] -> String -> State TranslateState IExp
 translatePairAccess t [MEM e ty] str = do
   addBuiltIn id_p_check_null_pointer
   temp <- newTemp
   ldtemp <- newTemp
-  let offset = if str == "fst" then (TEMP ldtemp) else (BINEXP PLUS (TEMP ldtemp) (CONSTI 4))
-      getpaddr = (MOV (TEMP temp) (MEM e ty))
+  let getpaddr = (MOV (TEMP temp) (MEM e ty))
       check = EXP $ Frame.externalCall "#p_check_null_pointer" [(TEMP temp)]
-      ld = (MOV (TEMP ldtemp) (MEM (TEMP temp) ty))
-  return $ Ex $ ESEQ (SEQ getpaddr $ SEQ check $ ld) (MEM offset (typeLen t))
+      ld = (MOV (TEMP ldtemp) (MEM (if str == "fst" then (TEMP temp) else (BINEXP PLUS (TEMP temp) (CONSTI 4)) ) ty))
+  return $ Ex $ ESEQ (SEQ getpaddr $ SEQ check $ ld) (MEM (TEMP ldtemp) (typeLen t))
 
 -- turn IExp to Exp
 unEx :: IExp -> State TranslateState Exp

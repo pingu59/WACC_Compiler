@@ -297,11 +297,12 @@ module BackEnd.Munch where
   plusMinus destination source op srcreg srcinstr = do
     addBuiltIn id_p_throw_overflow_error
     (i1, t1) <- munchExp destination
-    let calc = IOPER {assem = CBS_ (op S AL) (RTEMP t1) (RTEMP t1) source,
+    temp <- newTemp
+    let calc = IOPER {assem = CBS_ (op S AL) (RTEMP temp) (RTEMP t1) source,
                       src = ([t1] ++ srcreg), dst = [t1], jump = []}
         br = IOPER {assem = BRANCH_ (BL VS) (L_ "p_throw_overflow_error"),
                       src = [], dst = [], jump = ["p_throw_overflow_error"]}
-    return $ \c -> (i1++srcinstr++[calc, br], t1)
+    return $ \c -> (i1++srcinstr++[calc, br], temp)
   
   condExp :: Exp -> State TranslateState (Cond -> ([ASSEM.Instr], Temp))
   -- LSL inside ADD SUB  ** ugly pattern match to avoid run time loop --

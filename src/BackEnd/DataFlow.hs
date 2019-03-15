@@ -842,7 +842,7 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+putBackMemAccess stms = stms -- putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
 
 putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
 putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)

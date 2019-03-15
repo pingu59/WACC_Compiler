@@ -114,6 +114,9 @@ addEqual flow = do
 
 containsSP :: Exp -> Bool
 containsSP (TEMP 13) = True
+containsSP (TEMP 0) = True
+containsSP (TEMP 1) = True
+containsSP (TEMP 2) = True
 containsSP (BINEXP _ a b) = containsSP a || containsSP b
 containsSP (MEM a _) = containsSP a
 containsSP _ = False
@@ -253,7 +256,7 @@ genSym = do
     state <- get
     let oneL = group1LayerPotential et_ []
         et_ = et state
-        multed = addMult oneL [] et_ 
+        multed = addMult oneL et_ 0
         classes = mergeGroups multed et_
         numberclass = zip [0..] classes
     mapM putNumberClass numberclass
@@ -265,15 +268,25 @@ putNumberClass (i, exps) = do
     let synTab = synExpr state
         newSyn = zip exps (repeat i)
     put $ state {synExpr = union newSyn synTab}
-    return ()       
+    return ()    
+    
+addMult :: [[Exp]] -> EqualTable -> Int -> [[Exp]]
+addMult this et i
+    | thislen == nextlen || i > 2 = next
+    | otherwise = addMult next et (i + 1)
+    where
+        thislen = sum (map length this)
+        nextlen = sum (map length next)
+        next = addMultOne this [] et
+        maximum = log_ (length et)
+        log_ x = if (odd x) then 0 else (floor . logBase 2.0 . fromIntegral) x 
 
-addMult :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
-addMult [] acc et = acc
-addMult (thisGroup:remain) acc et = addMult remain (newthis:acc) et
+addMultOne :: [[Exp]] -> [[Exp]] -> EqualTable -> [[Exp]]
+addMultOne [] acc et = acc
+addMultOne (thisGroup:remain) acc et = addMultOne remain (newthis:acc) et
     where
         multi = nub $ concatMap (permutateExp (thisGroup:(remain ++ acc))) thisGroup
         newthis = union multi thisGroup
-
 
 mergeGroups :: [[Exp]] -> EqualTable -> [[Exp]]
 mergeGroups this et
@@ -314,13 +327,14 @@ genPotential et x acc
 
 --              groupTable
 permutateExp :: [[Exp]]-> Exp -> [Exp] 
-permutateExp gt (MEM (TEMP t) size) = map (\x -> (MEM x size)) potential
+
+permutateExp gt (MEM (TEMP t) size) = map (\x -> (MEM x size)) (potential)
     where
-        potential = findSynGroup (TEMP t) gt
+        potential = (findSynGroup (TEMP t) gt) 
 
 permutateExp gt (BINEXP rop (TEMP t1) (TEMP t2)) = map (\(x1, x2) -> (BINEXP rop x1 x2)) final
     where
-        potential1 = findSynGroup (TEMP t1) gt
+        potential1 = findSynGroup (TEMP t1) gt 
         potential2 = findSynGroup (TEMP t2) gt
         permTwo = concatMap (\x-> zip (repeat x) potential2) potential1
                  ++ concatMap (\x-> zip (repeat x) potential1) potential2
@@ -333,6 +347,10 @@ permutateExp gt (BINEXP rop (TEMP t) a) = map (\x -> (BINEXP rop x a)) potential
 permutateExp gt (BINEXP rop a (TEMP t)) = map (\x -> (BINEXP rop a x)) potential
     where
         potential = findSynGroup (TEMP t) gt
+
+permutateExp gt (MEM (MEM (TEMP t) size2) size) = map (\x -> (MEM x size)) (potential)
+    where
+        potential = (findSynGroup (MEM (TEMP t) size2) gt)
 
 permutateExp _ x = [x]
 
