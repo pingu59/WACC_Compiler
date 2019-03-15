@@ -40,7 +40,9 @@ library
       BackEnd.Munch
       BackEnd.RegAlloc
       BackEnd.Temp
-      BackEnd.Todo
+      BackEnd.DataFlow
+      BackEnd.GenKill
+      BackEnd.DeadCode
       BackEnd.Translate
       FrontEnd.AST
       FrontEnd.Lexer

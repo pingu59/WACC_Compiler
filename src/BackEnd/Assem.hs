@@ -90,3 +90,16 @@ containsDummy :: Instr -> Bool
 containsDummy (IOPER assem _ _ _) = Arm.dummyInstr assem
 containsDummy (ILABEL assem _) = Arm.dummyInstr assem
 containsDummy (IMOV assem _ _) = Arm.dummyInstr assem
+
+updateReg :: Int -> Int -> [Int] -> [Int]
+updateReg from to list = [if x == from then to else x|x <- list]
+
+normGK :: Int -> Int -> [Instr] -> [Instr]
+normGK _ _ [] = []
+normGK from to ((IMOV assem dst src):remain) 
+    = (IMOV assem (updateReg from to dst) (updateReg from to src)) : normGK from to remain
+normGK from to ((IOPER assem dst src jump):remain) 
+    = (IOPER assem (updateReg from to dst) (updateReg from to src) jump) : normGK from to remain
+normGK from to (a@(ILABEL _ _):remain) = a : normGK from to remain
+
+normAll from to instr = normGK from to $ normAssem' [(from, to)] instr

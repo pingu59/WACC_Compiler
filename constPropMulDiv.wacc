@@ -1,0 +1,12 @@
+# test div and mul constant propagation
+
+# Program:
+
+begin
+  int x = 5 ;
+  int y = 3 ;
+  int z1 = x / y ;
+  int z2 = x * y ;
+  println z1 ;
+  println z2
+end

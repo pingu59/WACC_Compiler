@@ -14,7 +14,6 @@ import BackEnd.Assem as Assem
 import BackEnd.IR as IR
 import BackEnd.Builtin
 
-
 data Access = Access Frame.Frame Frame.Access deriving (Eq, Show)
 
 data EnvEntry = VarEntry Access Type
@@ -147,8 +146,10 @@ popLevel = do
 getCurrFrame :: State TranslateState Frame.Frame
 getCurrFrame = do
   state <- get
-  (level:rest) <- verifyLevels $ levels state
-  return $ levelFrame level
+  result <- verifyLevels $ levels state
+  case result of
+    (level:rest) -> return $ levelFrame level
+    otherwise -> fail "verify level fails"
 
 addBuiltIn :: [Int] -> State TranslateState ()
 addBuiltIn (i:is) = do
@@ -211,13 +212,18 @@ addFragment frag = do
 getVarEntry :: String -> State TranslateState Exp
 getVarEntry symbol = do
   state <- get
-  ((VarEntry (Access frame access) t), prevLevels) <- (find' (levels state) [])
-  case access of
-    Frame.InReg temp -> return $ TEMP temp
-    Frame.InFrame offset -> do
-      let   prevSize = sum (map levelSize prevLevels)
-            targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
-      return $ CALL (NAME "#memaccess") [(CONSTI $  (prevSize + targetOffset))]
+  result <- (find' (levels state) [])
+  case result of
+    ((VarEntry (Access frame access) t), prevLevels) ->
+      case access of
+        Frame.InReg temp -> return $ TEMP temp
+        Frame.InFrame offset -> do
+          let   prevSize = sum (map levelSize prevLevels)
+                targetOffset = levelSize ((levels state) !! (length prevLevels)) + offset
+                spTotal = sum (map levelSize (levels state))
+                frame = levelFrame ((levels state) !! 0)
+          return $ CALL (NAME "#memaccess") [CONSTI $  (prevSize + targetOffset), CONSTI spTotal]
+    otherwise -> fail ""
 
   where find' :: [Level] -> [Level] -> State TranslateState (EnvEntry, [Level])
         find' (l:levels) prev
@@ -228,7 +234,8 @@ getVarEntry symbol = do
           case HashMap.lookup symbol (varTable level) of
             Just (VarEntry _ _) -> True
             otherwise -> False
-        levelSize l = Frame.frameSize $ levelFrame l
+
+levelSize l = Frame.frameSize $ levelFrame l
 
 -- adjust stack pointer on return of a function
 -- removing all the local variables on the stack
@@ -292,9 +299,9 @@ translateProgramF (Ann (Program fs stms) _) = do
   state <- get
   adjustSP' <- adjustSP
   popLevel
-  return $ SEQ (LABEL "main") (SEQ (SEQ (IR.PUSH (TEMP Frame.lr)) stm')
+  return $ SEQ (LABEL "main") (SEQ (SEQ (IR.PUSHREGS [Frame.lr]) stm')
                (SEQ adjustSP' (SEQ (MOV (TEMP 0) (MEM (CONSTI 0) 4))
-               (IR.POP (TEMP Frame.pc)))))
+               (IR.POPREGS [Frame.pc]))))
 
 
 translateStatListF :: StatListF () -> State TranslateState IExp
@@ -308,10 +315,12 @@ translateStatF (Ann (Declare t id expr) _) = do
   let { Ann (Ident symbol) _ = id }
   access <- allocLocal symbol t True
   exp <- translateExprF expr
-  let { mem' = MEM (TEMP Frame.sp) (typeLen t)} -- access through sp --use this one!
+  state <- get
+  let mem' = (CALL (NAME "#memaccess") [CONSTI 0, CONSTI spTotal]) -- access through sp --use this one!
+      spTotal = sum (map levelSize (levels state))
   addVarEntry symbol t access
   exp' <- unEx exp
-  return $ Nx (SEQ adjustSP (MOV mem' exp'))
+  return $ Nx (SEQ adjustSP (MOV (MEM mem' (typeLen t)) exp'))
   where adjustSP =
           MOV (TEMP Frame.sp) (BINEXP MINUS (TEMP Frame.sp) (CONSTI $ Frame.typeSize t))
 
@@ -378,10 +387,13 @@ translateStatF (Ann (While expr stms) _) = do
 translateStatF (Ann (Subroutine stms) _) = do
   level <- newLevel
   pushLevel level
-  Nx stms' <- translateStatListF stms
-  adjustSP' <- adjustSP
-  popLevel
-  return $ Nx (SEQ stms' adjustSP')
+  result <- translateStatListF stms
+  case result of
+    Nx stms' -> do
+      adjustSP' <- adjustSP
+      popLevel
+      return $ Nx (SEQ stms' adjustSP')
+    otherwise -> fail ""
 
 translateStatF (Ann (FuncStat f) _) = do
   f' <- translateFuncAppF f
@@ -454,12 +466,13 @@ translateBuiltInFuncAppF (Ann (FuncApp t id exprs) (pos, expT)) = do
   exps <- mapM translateExprF exprs
   exps' <- mapM unEx exps
   let { Ann (Ident symbol) _ = id }
+  --change: move add built in to munch
   case symbol of
-    "*" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp MUL exps' }
-    "/" -> do { addBuiltIn id_p_check_divide_by_zero ;return $ binexp DIV exps' }
-    "%" -> do { addBuiltIn id_p_check_divide_by_zero ;return $ binexp MOD exps' }
-    "+" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp PLUS exps' }
-    "-" -> do { addBuiltIn id_p_throw_overflow_error ;return $ binexp MINUS exps' }
+    "*" -> do return $ binexp MUL exps'
+    "/" -> do return $ binexp DIV exps'
+    "%" -> do return $ binexp MOD exps'
+    "+" -> do return $ binexp PLUS exps'
+    "-" -> do return $ binexp MINUS exps'
     "&&" -> return $ binexp AND exps'
     "||" -> return $ binexp OR exps'
     ">" -> return $ condition GT exps'
@@ -503,9 +516,13 @@ translateBuiltInFuncAppF (Ann (FuncApp t id exprs) (pos, expT)) = do
 callp = \s -> (\exprs -> return $ Ex $ CALL (NAME s) exprs)
 
 translateFree :: Type -> [Exp] -> State TranslateState IExp
-translateFree (TPair _ _) exprs = do
+translateFree (TPair _ _) [pairAddr] = do
+  temp <- newTemp
   addBuiltIn id_p_free_pair
-  callp "#p_free_pair" exprs
+  let ld = (MOV (TEMP temp) pairAddr)
+      free = EXP $ Frame.externalCall "p_free_pair" [(TEMP temp)]
+  return $ Nx (SEQ ld free)
+
 translateFree (TArray _) exprs = callp "#p_free_array" exprs
 translateFree TStr exprs = callp "#p_free_array" exprs
 
@@ -549,11 +566,16 @@ translatePrintln t exps = do
 translateNewPair :: Type -> [Exp] -> State TranslateState IExp
 translateNewPair (TPair t1 t2) exps
   = return $ Ex $ CALL (NAME $ "#newpair") ((CONSTI $ typeLen t1):(CONSTI $ typeLen t2):exps)
-
+  
 translatePairAccess :: Type -> [Exp] -> String -> State TranslateState IExp
-translatePairAccess t exps str = do
+translatePairAccess t [MEM e ty] str = do
   addBuiltIn id_p_check_null_pointer
-  return $ Ex $ MEM (CALL (NAME ("#" ++ str)) exps) (typeLen t)
+  temp <- newTemp
+  ldtemp <- newTemp
+  let getpaddr = (MOV (TEMP temp) (MEM e ty))
+      check = EXP $ Frame.externalCall "#p_check_null_pointer" [(TEMP temp)]
+      ld = (MOV (TEMP ldtemp) (MEM (if str == "fst" then (TEMP temp) else (BINEXP PLUS (TEMP temp) (CONSTI 4)) ) ty))
+  return $ Ex $ ESEQ (SEQ getpaddr $ SEQ check $ ld) (MEM (TEMP ldtemp) (typeLen t))
 
 -- turn IExp to Exp
 unEx :: IExp -> State TranslateState Exp

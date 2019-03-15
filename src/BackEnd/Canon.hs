@@ -24,7 +24,7 @@ import BackEnd.Frame as Frame
 -}
 
 
--- Main function for transforming IR tree 
+-- Main function for transforming IR tree
 transform :: Stm -> State TranslateState [Stm]
 transform stm = do
   stms <- linearize stm
@@ -58,7 +58,7 @@ flat' exp@(BINEXP bop e1 e2@(BINEXP bop2 e21 e22)) = do
   then return ([NOP], exp)
   else do
     ttotal <- newTemp
-    (stm2 , te2) <- flat' e2 
+    (stm2 , te2) <- flat' e2
     let ret = stm2 ++ [MOV (TEMP ttotal) (BINEXP bop e1 te2)]
     return ( ret, (TEMP ttotal))
 flat' x = return ([NOP], x)
@@ -191,7 +191,7 @@ reorder [] = return (NOP, [])
 
 reorderStm :: [Exp] -> ([Exp] -> Stm) -> State TranslateState Stm
 reorderStm exps build = do
-  (stm, exps') <- reorder  exps
+  (stm, exps') <- reorder exps
   return $ connect stm (build  exps')
 
 reorderExp :: [Exp] -> ([Exp] -> Exp) -> State TranslateState (Stm, Exp)
@@ -201,19 +201,69 @@ reorderExp exps build = do
 
 
 doStm :: Stm -> State TranslateState Stm
+{- new -}
+doStm (JUMP (ESEQ s e) l) = doStm (SEQ s (JUMP e l))
+
+doStm (MOV (MEM a@(ESEQ aa@(MOV (TEMP t1) (BINEXP rop (TEMP _) (CONSTI _))) (TEMP t2)) size) b@(ESEQ ba bt ))
+  = doStm $ SEQ ba (SEQ aa (MOV (MEM (TEMP t2) size) bt)) 
+
+-- ASSUME ALL COMMUTE ??  COMMUTE FUNCTION BEHAVIOUR WEIRD
+doStm (CJUMP rop (ESEQ s1 e1) (ESEQ s2 e2) t f) = do
+  doStm $ SEQ s1 (SEQ s2 (CJUMP rop e1 e2 t f))
+
+doStm (CJUMP rop (ESEQ s e1) e2 t f) = doStm (SEQ s (CJUMP rop e1 e2 t f))
+
+doStm (CJUMP rop e1 (ESEQ s e2) t f) = do
+    temp <- newTemp
+    doStm (SEQ (MOV (TEMP temp) e1) (CJUMP rop (TEMP temp) e2 t f))
 
 doStm p@(PUSHREGS _) = return p
 
 doStm p@(POPREGS _) = return p
 
 doStm (MOV (TEMP t) (CALL (NAME f) es))
-  = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+  | allSimple es = reorderStm es (\es -> MOV (TEMP t) (CALL (NAME f) es))
+  | otherwise = do
+    (stm, es') <- reorderCall es
+    doStm (SEQ stm (MOV (TEMP t) (CALL (NAME f) es')))
 
-doStm (MOV (MEM e s) (CALL (NAME f) es))
-  = reorderStm (e:es) (\(e:es) -> MOV (MEM e s) (CALL (NAME f) es))
+doStm (MOV m@(MEM e s) c@(CALL (NAME f) es)) = do
+  temp <- newTemp
+  doStm $ SEQ (MOV (TEMP temp) (c)) (MOV m (TEMP temp))
 
 doStm (MOV (TEMP t) (CALL e es)) = undefined
-  -- = reorderStm (e:es) (\(e:es) -> MOV (TEMP t) (CALL e es))
+
+{- New -}
+doStm (MOV (BINEXP bop e1 e2) b) = do
+  if (isOneLayer e1) then
+    if (isOneLayer e2) then
+      reorderStm [b] (\[b] -> (MOV (BINEXP bop e1 e2) b))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s2 (MOV (BINEXP bop e1 e2') b))
+  else do
+    (s1, e1') <- doExp e1
+    if (isOneLayer e2 )then
+      doStm  (SEQ s1 (MOV (BINEXP bop e1' e2) b))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s1 (SEQ s2 (MOV (BINEXP bop e1' e2') b)))
+
+-- ASSUME b is simple
+doStm (MOV b (BINEXP bop e1 e2)) = do
+  if (isOneLayer e1) then
+    if (isOneLayer e2) then
+      reorderStm [b] (\[b] -> (MOV b (BINEXP bop e1 e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s2 (MOV b (BINEXP bop e1 e2')))
+  else do
+    (s1, e1') <- doExp e1
+    if (isOneLayer e2 )then
+      doStm  (SEQ s1 (MOV b (BINEXP bop e1' e2)))
+    else do
+      (s2, e2') <- doExp e2
+      doStm (SEQ s1 (SEQ s2 (MOV b (BINEXP bop e1' e2'))))
 
 doStm (MOV (TEMP t) b)
   = reorderStm [b] (\(b:_) -> MOV (TEMP t) b)
@@ -226,17 +276,17 @@ doStm stm@(MOV (MEM (TEMP t) size) (ESEQ s e)) = do
   s' <- doStm s
   reorderStm [e] (\(e:_) -> SEQ s' (MOV (MEM (TEMP t) size) e))
 
-doStm stm@(MOV (MEM e s) b) = do
-  reorderStm [e, b] (\(e:b_) -> MOV (MEM e s) b)
+{-new-}
+doStm stm@(MOV (MEM e s) (ESEQ s1 e1)) = do
+  s1' <- doStm s1
+  reorderStm [e, e1] (\(e:e1_) -> SEQ s1' (MOV (MEM e s) e1))
+
+doStm stm@(MOV (MEM e s) b)
+  | isOneLayer e && isOneLayer b = return stm
+  | otherwise = reorderStm [e, b] (\(e:b_) -> MOV (MEM e s) b)
 
 doStm (MOV (ESEQ s e) b)
   = doStm (SEQ s (MOV e b))
-
-doStm (PUSH e)
-  = reorderStm [e] (\(e:_) -> PUSH e)
-
-doStm (POP e)
-  = reorderStm [e] (\(e:_) -> POP e)
 
 doStm (JUMP e labels)
   = reorderStm [e] (\(e:_) -> JUMP e labels)
@@ -250,14 +300,46 @@ doStm (SEQ stm1 stm2) = do
   return $ SEQ stm1' stm2'
 
 doStm (EXP (CALL (NAME f) es))
-  = reorderStm es (\es -> EXP (CALL (NAME f) es))
+  | allSimple es = reorderStm es (\es -> EXP (CALL (NAME f) es))
+  | otherwise = do
+    (stm, es') <- reorderCall es
+    doStm (SEQ stm (EXP (CALL (NAME f) es')))
 
 doStm (EXP (CALL e es))
-  = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
+  | allSimple (e:es) = reorderStm (e:es) (\(e:es) -> EXP (CALL e es))
+  | otherwise = do
+    result <- reorderCall (e:es)
+    case result of
+      (stm, (e':es')) -> doStm (SEQ stm (EXP (CALL e' es')))
+      otherwise -> fail ""
+
+
 doStm (EXP e)
   = reorderStm [e] (\(e:_) -> EXP e)
 
 doStm stm = return stm
+
+
+allSimple :: [Exp] -> Bool
+allSimple exps = filter (notSimple) exps == []
+
+notSimple (CONSTC _) = False
+notSimple (CONSTI _) = False
+notSimple (NAME _) = False
+notSimple (TEMP _) = False
+notSimple _ = True
+
+reorderCall :: [Exp] -> State TranslateState (Stm, [Exp])
+reorderCall exps = reorderCall' exps [] NOP
+
+reorderCall' :: [Exp] -> [Exp] -> Stm -> State TranslateState (Stm, [Exp])
+reorderCall' [] acc stm = return (stm, acc)
+reorderCall' (e:es) acc stm = do
+  if(notSimple e) then do
+    temp <- newTemp
+    reorderCall' es (acc ++ [TEMP temp]) (SEQ (MOV (TEMP temp) e) stm)
+  else
+    reorderCall' es (acc ++ [e]) stm
 
 isOneLayer :: Exp -> Bool
 isOneLayer (CONSTI _) = True
@@ -268,6 +350,18 @@ isOneLayer (NAME _) = True
 isOneLayer e = False
 
 doExp :: Exp -> State TranslateState (Stm, Exp)
+{- New -}
+doExp (BINEXP bop (ESEQ s e1) e2) = doExp (ESEQ s (BINEXP bop e1 e2))
+
+doExp (MEM(ESEQ s e) i) = doExp (ESEQ s (MEM e i))
+
+doExp (BINEXP bop e1 (ESEQ s e2)) = do
+  if(commute e1 s) then
+    doExp (ESEQ s (BINEXP bop e1 e2))
+  else do
+    t <- newTemp
+    doExp (ESEQ (MOV (TEMP t) e1) (ESEQ s (BINEXP bop (TEMP t) e2)))
+
 doExp exp@(MEM e@(BINEXP bop e1 e2) s) = do
   if isOneLayer e1 && isOneLayer e2
   then return (NOP, exp)
@@ -282,10 +376,22 @@ doExp (MEM e s)
   = reorderExp [e] (\(e:_) -> MEM e s)
 
 doExp (CALL (NAME f) es)
-  = reorderExp es (\es -> CALL (NAME f) es)
+  | allSimple es = reorderExp es (\es -> CALL (NAME f) es)
+  | otherwise = do
+    (stm, es') <- reorderCall es
+    (innerStm, innerExp) <- doExp (CALL (NAME f) es')
+    return (SEQ stm innerStm, innerExp)
 
 doExp (CALL e es)
-  = reorderExp (e:es) (\(e:es) -> CALL e es)
+  | allSimple es = reorderExp (e:es) (\(e:es) -> CALL e es)
+  | otherwise = do
+    result <- reorderCall (e:es)
+    case result of
+      (stm, (e':es')) -> do
+        (innerStm, innerExp) <- doExp (CALL e' es')
+        return (SEQ stm innerStm, innerExp)
+      otherwise -> fail ""
+
 
 doExp (ESEQ stm e) = do
   stm' <- doStm stm
@@ -293,7 +399,6 @@ doExp (ESEQ stm e) = do
   return (SEQ stm' stm'', e')
 
 doExp e = reorderExp [] (\_ -> e)
-
 
 -- Utility for Testing
 testCanonFile :: String -> IO [Stm]
