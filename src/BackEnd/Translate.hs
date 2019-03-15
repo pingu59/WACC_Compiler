@@ -564,26 +564,9 @@ translatePrintln t exps = do
   return $ Nx (SEQ (EXP print') (EXP (CALL (NAME "#p_print_ln") [])))
 
 translateNewPair :: Type -> [Exp] -> State TranslateState IExp
-translateNewPair (TPair t1 t2) [f, s] = do
-  taddr <- newTemp
-  state <- get
-  temp1 <- newTemp
-  temp2 <- newTemp
-  temp3 <- newTemp
-  let
-      malloc1 = EXP $ Frame.externalCall "malloc" [CONSTI 8, TEMP temp1]
-      malloc2 = EXP $ Frame.externalCall "malloc" [CONSTI (typeLen t1), TEMP temp2]
-      malloc3 = EXP $ Frame.externalCall "malloc" [CONSTI (typeLen t2), TEMP temp3]
-      strPairAddr = (MOV (TEMP taddr) (TEMP temp1))
-      savefst = (MOV (MEM  (TEMP temp2) (typeLen t1)) f)
-      savesnd = (MOV (MEM  (TEMP temp3) (typeLen t2)) s)
-      strfstaddr = (MOV (MEM (TEMP taddr) 4) (TEMP temp2))
-      strsndaddr = (MOV (MEM (BINEXP PLUS (TEMP taddr) (CONSTI 4)) 4) (TEMP temp3))
-      strpaironstack = (MOV (MEM (CALL (NAME "#memaccess") [CONSTI 0 , CONSTI spTotal]) 4) (TEMP taddr))
-      spTotal = sum (map levelSize (levels state))
-  return $ Ex (ESEQ (SEQ malloc1 $ SEQ strPairAddr $ SEQ malloc2 $ SEQ savefst $ SEQ strfstaddr 
-                      $ SEQ malloc3 $ SEQ savesnd $ SEQ strsndaddr strpaironstack) (TEMP taddr)) 
-
+translateNewPair (TPair t1 t2) exps
+  = return $ Ex $ CALL (NAME $ "#newpair") ((CONSTI $ typeLen t1):(CONSTI $ typeLen t2):exps)
+  
 translatePairAccess :: Type -> [Exp] -> String -> State TranslateState IExp
 translatePairAccess t [MEM e ty] str = do
   addBuiltIn id_p_check_null_pointer
