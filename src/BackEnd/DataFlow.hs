@@ -844,26 +844,26 @@ testCP stms = do
     putStrLn $ show out
 
 putBackMemAccess :: [Stm] -> [Stm]
-putBackMemAccess stms = stms -- putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
+putBackMemAccess stms = putBackMemAccess' (zip [0..] (map (\x -> [x])stms)) stms
 
--- putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
--- putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
---   = putBackMemAccess' newref rest
---     where
---         newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
---         to = (length ref - (length rest))
---         (from, sub) = findTemp (TEMP t) ref
---
--- putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
---   = putBackMemAccess' newref rest
---     where
---         newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
---         to = (length ref - (length rest))
---         (from, sub) = findTemp (TEMP t) ref
--- putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
---     | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
--- putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
--- putBackMemAccess' ref [] = concatMap snd ref
+putBackMemAccess' :: [(Int, [Stm])] -> [Stm] -> [Stm]
+putBackMemAccess' ref ((MOV (MEM (TEMP t) size) c) : rest)
+  = putBackMemAccess' newref rest
+    where
+        newref = updateRef to [(MOV (MEM sub size) c)]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
+
+putBackMemAccess' ref ((MOV c (MEM (TEMP t) size)) : rest)
+  = putBackMemAccess' newref rest
+    where
+        newref =  updateRef to [(MOV c (MEM sub size))]  (updateRef from [] ref)
+        to = (length ref - (length rest))
+        (from, sub) = findTemp (TEMP t) ref
+putBackMemAccess' ref ((MOV (TEMP t1) b): (EXP (CALL (NAME n) [(TEMP t2)])) : rest)
+    | t1 == t2 = (EXP (CALL (NAME n) [b])) : putBackMemAccess rest
+putBackMemAccess' ref (x:xs) = x : (putBackMemAccess xs)
+putBackMemAccess' ref [] = concatMap snd ref
 
 updateRef i stm ref
     | i > 0 = [ if num == i then (num, stm) else (num, x) | (num , x) <- ref]

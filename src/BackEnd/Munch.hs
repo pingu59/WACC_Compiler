@@ -36,6 +36,9 @@ module BackEnd.Munch where
     t <- newTemp
     return ([IOPER {assem = CBS_ (ADD NoSuffix AL) (RTEMP t) SP (IMM i),
                    src = [13], dst = [t], jump = []}], t)
+  
+  munchExp (CALL (NAME "p_free_pair") _) = do
+    return $ ([IOPER { assem = BRANCH_ (BL AL) (L_ "p_free_pair"), src = [0], dst = [0], jump = ["p_free_pair"]}], 0)
 
   munchExp (CALL (NAME "#malloc") _) =
     return $ ([IOPER { assem = BRANCH_ (BL AL) (L_ "malloc"), src = [0], dst = [0], jump = ["malloc"]}], 0)
@@ -297,12 +300,12 @@ module BackEnd.Munch where
   plusMinus destination source op srcreg srcinstr = do
     addBuiltIn id_p_throw_overflow_error
     (i1, t1) <- munchExp destination
-    temp <- newTemp
-    let calc = IOPER {assem = CBS_ (op S AL) (RTEMP temp) (RTEMP t1) source,
+    -- temp <- newTemp
+    let calc = IOPER {assem = CBS_ (op S AL) (RTEMP t1) (RTEMP t1) source,
                       src = ([t1] ++ srcreg), dst = [t1], jump = []}
         br = IOPER {assem = BRANCH_ (BL VS) (L_ "p_throw_overflow_error"),
                       src = [], dst = [], jump = ["p_throw_overflow_error"]}
-    return $ \c -> (i1++srcinstr++[calc, br], temp)
+    return $ \c -> (i1++srcinstr++[calc, br], t1)
   
   condExp :: Exp -> State TranslateState (Cond -> ([ASSEM.Instr], Temp))
   -- LSL inside ADD SUB  ** ugly pattern match to avoid run time loop --

@@ -517,8 +517,8 @@ callp = \s -> (\exprs -> return $ Ex $ CALL (NAME s) exprs)
 
 translateFree :: Type -> [Exp] -> State TranslateState IExp
 translateFree (TPair _ _) [pairAddr] = do
-  addBuiltIn id_p_free_pair
   temp <- newTemp
+  addBuiltIn id_p_free_pair
   let ld = (MOV (TEMP temp) pairAddr)
       free = EXP $ Frame.externalCall "p_free_pair" [(TEMP temp)]
   return $ Nx (SEQ ld free)
